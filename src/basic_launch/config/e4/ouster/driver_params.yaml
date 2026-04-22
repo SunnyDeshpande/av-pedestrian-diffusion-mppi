@@ -2,10 +2,10 @@ ouster/os_driver:
   ros__parameters:
     # sensor_hostname[required]: hostname or IP address of the sensor (IP4 or
     # IP6).
-    sensor_hostname: 'os-122344001164.local'
+    sensor_hostname: '169.254.240.180'
     # udp_dest[optional]: hostname or multicast group IP where the sensor will
     # send UDP data packets.
-    udp_dest: ''
+    udp_dest: '169.254.1.10'
     # mtp_dest[optional]: hostname IP address for receiving data packets via
     # multicast, by default it is INADDR_ANY, so packets will be received on
     # first available network interface.
@@ -41,11 +41,11 @@ ouster/os_driver:
     # lidar_port[optional]: port value should be in the range [0, 65535]. If you
     # use 0 as the port value then the first avaliable port number will be
     # assigned.
-    lidar_port: 0
+    lidar_port: 7502
     # imu_port[optional]: port value should be in the range [0, 65535]. If you
     # use 0 as the port value then the first avaliable port number will be
     # assigned.
-    imu_port: 0
+    imu_port: 7503
     # sensor_frame[optional]: name to use when referring to the sensor frame.
     sensor_frame: os_sensor
     # lidar_frame[optional]: name to use when referring to the lidar frame.

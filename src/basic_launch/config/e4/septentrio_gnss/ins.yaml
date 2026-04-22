@@ -2,7 +2,7 @@
 
 # INS Parameters
 
-device: tcp://10.42.0.127:28784
+device: tcp://192.168.3.1:28784
 
 serial:
   baudrate: 921600

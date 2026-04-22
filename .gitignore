@@ -29,7 +29,7 @@ compile_commands.json
 *~
 
 # ROS
-COLCON_IGNORE
+# COLCON_IGNORE
 *.bag
 *.db3
 
