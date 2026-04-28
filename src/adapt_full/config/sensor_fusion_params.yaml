@@ -1,0 +1,10 @@
+sensor_fusion_node:
+  ros__parameters:
+    matching_threshold: 2.0                                     
+    lidar_distance_weight: 0.8      
+    camera_distance_weight: 0.2                  
+    lidar_direction_weight: 0.3     
+    camera_direction_weight: 0.7    #according to chatgpt             
+    sync_queue_size: 10             
+    sync_slop: 0.1                  
+                                    

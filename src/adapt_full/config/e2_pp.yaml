@@ -1,0 +1,20 @@
+pure_pursuit:
+  ros__parameters:
+    vehicle_name: 'e2'
+    rate: 20.0
+    look_ahead: 5.0
+    wheelbase: 1.75
+    offset: 1.26
+    origin_lat: 40.092857
+    origin_lon: -88.235992
+    desired_speed: 2.0
+    max_accel: 0.5
+    pid:
+      kp: 0.6
+      ki: 0.0
+      kd: 0.1
+      wg: 10.0
+    filter:
+      cutoff: 1.2
+      fs: 30.0
+      order: 4.0

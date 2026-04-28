@@ -1,0 +1,28 @@
+<!-- ~/UIUC/POSO/ECE484_Adapt/src/yolo_person_detector/package.xml -->
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>yolo_person_detector</name>
+  <version>0.1.0</version>
+  <description>YOLOv11 person detector for ROS 2</description>
+
+  <maintainer email="sunnydeshpande9900@gmail.com">Sunny Deshpande</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <depend>rclpy</depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>vision_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+  
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

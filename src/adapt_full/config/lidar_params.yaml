@@ -1,0 +1,41 @@
+lidar_preprocessor:
+  ros__parameters:
+    # Cropping parameters - Define 3D region of interest
+    crop_min_x: -15.0
+    crop_max_x: 0.0
+    crop_min_y: -3.0
+    crop_max_y: 3.0
+    crop_min_z: -2.1
+    crop_max_z: 1.0
+
+    # Preprocessing parameters
+    voxel_size: 0.15                # Voxel grid downsampling size (meters)
+    sor_nb_neighbors: 30            # Statistical outlier removal - number of neighbors
+    sor_std_ratio: 1.5              # Statistical outlier removal - std ratio threshold
+    ground_z_threshold: -1.0        # Z-threshold for ground plane removal (meters)
+
+    # Clustering & Tracking parameters
+    dbscan_eps: 0.6                 # DBSCAN epsilon - max distance between points (meters)
+    dbscan_min_points: 20           # DBSCAN minimum points to form a cluster
+    track_max_distance: 1.2         # Maximum distance for track association (meters)
+    track_max_age: 10               # Maximum frames to keep track alive without detection
+    track_min_hits: 3               # Minimum hits before track is confirmed
+    ema_alpha: 0.4                  # Exponential moving average smoothing factor
+
+    # Human detection parameters - Geometric constraints
+    human_height_min: 0.8           # Minimum height for human detection (meters)
+    human_height_max: 2.2           # Maximum height for human detection (meters)
+    human_width_max: 1.0            # Maximum width for human detection (meters)
+    human_depth_max: 1.0            # Maximum depth for human detection (meters)
+    human_ratio_min: 1.0            # Minimum height/width ratio
+    human_footprint_max: 0.5        # Maximum footprint area (square meters)
+    human_volume_min: 0.08          # Minimum bounding box volume (cubic meters)
+    human_volume_max: 1.2           # Maximum bounding box volume (cubic meters)
+    human_compactness_max: 0.4      # Maximum compactness (volume ratio)
+    human_xy_flatness_min: 0.2      # Minimum xy-plane flatness
+
+    # Motion detection parameters
+    min_motion_threshold: 0.3       # Minimum motion to be considered moving (meters/frame)
+    static_check_frames: 10         # Number of frames to determine if object is static
+    max_intensity_avg: 99999.0      # Maximum average intensity threshold
+

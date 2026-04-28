@@ -1,0 +1,36 @@
+pedestrian_aware_path:
+  ros__parameters:
+    # Vehicle identification
+    vehicle_name: ""
+
+    # Control loop rate
+    rate_hz: 20
+
+    # Speed parameters
+    desired_speed: 3.0  # m/s - cruise speed when no pedestrian detected
+    max_acceleration: 1.0
+
+    # Pedestrian detection danger zone parameters
+    pedestrian:
+      min_danger_angle: 45      # degrees - minimum angle of danger zone
+      max_danger_angle: 85      # degrees - maximum angle of danger zone
+      max_danger_distance: 10   # meters - stop if pedestrian closer than this
+      timeout: 1.0              # seconds - assume clear if no messages
+
+    # Braking parameters
+    braking:
+      hard_brake_effort: 0.6    # Emergency brake effort (0.0-1.0)
+      holding_effort: 0.3       # Holding brake to prevent roll
+
+    # PID controller parameters for speed control
+    pid:
+      kp: 0.6
+      ki: 0.0
+      kd: 0.1
+      wg: 10
+
+    # Low-pass filter parameters for speed measurements
+    filter:
+      cutoff: 1.2
+      fs: 30
+      order: 4

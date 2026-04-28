@@ -1,0 +1,37 @@
+stanley_controller_node:
+  ros__parameters:
+    # Vehicle configuration
+    vehicle_name: ""                # Vehicle identifier (e.g., "e2", "e4")
+
+    # Control loop parameters
+    rate_hz: 20                     # Control loop frequency (Hz)
+
+    # Vehicle physical parameters
+    wheelbase: 2.57                 # Distance between front and rear axles (meters)
+    offset: 1.26                    # GPS antenna offset from rear axle (meters)
+
+    # Origin coordinates for local coordinate transformation
+    origin_lat: 40.0927422          # Origin latitude (degrees)
+    origin_lon: -88.2359639         # Origin longitude (degrees)
+
+    # Speed control parameters
+    desired_speed: 2.0              # Target speed in m/s (max: 5.0 m/s)
+    max_acceleration: 0.5           # Maximum acceleration in m/s² (max: 2.0 m/s²)
+
+    # Stanley controller parameters
+    stanley:
+      k: 2.5                        # Stanley gain for cross-track error correction
+      k_soft: 0.5                   # Softening constant to prevent division by zero at low speeds
+
+    # PID controller parameters for speed control
+    pid:
+      kp: 0.6                       # Proportional gain
+      ki: 0.0                       # Integral gain
+      kd: 0.1                       # Derivative gain
+      wg: 10.0                      # Integral windup guard
+
+    # Butterworth filter parameters for speed smoothing
+    filter:
+      cutoff: 1.2                   # Cutoff frequency (Hz)
+      fs: 30.0                      # Sampling frequency (Hz)
+      order: 4                      # Filter order

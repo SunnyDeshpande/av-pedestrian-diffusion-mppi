@@ -1,0 +1,34 @@
+adapt_safety_controller:
+  ros__parameters:
+    # Vehicle configuration - E4
+    vehicle_name: "e4"
+
+    # Control loop parameters
+    rate_hz: 20
+
+    # Speed control parameters
+    desired_speed: 2.0              # CRUISE mode speed in m/s
+    max_acceleration: 1.0           # E4 specific
+
+    # Safety speed parameters
+    speeds:
+      slow_speed: 2.5               # E4 - standard slow speed
+      creep_speed: 1.0              # E4 - standard creep speed
+
+    # Braking parameters
+    braking:
+      hard_brake_effort: 0.6        # Emergency brake
+      holding_effort: 0.3           # Holding brake
+
+    # PID controller parameters
+    pid:
+      kp: 0.6
+      ki: 0.0
+      kd: 0.1
+      wg: 10.0
+
+    # Butterworth filter parameters
+    filter:
+      cutoff: 1.2
+      fs: 30.0
+      order: 4

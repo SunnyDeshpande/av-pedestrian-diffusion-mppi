@@ -1,0 +1,22 @@
+high_level_decision_node:
+  ros__parameters:
+    # Decision Loop Configuration
+    decision_rate_hz: 20.0          # Decision loop frequency (Hz)
+
+    # Fail-Safe Parameters
+    stale_data_timeout: 0.5         # Maximum age of sensor data before fail-safe (seconds)
+                                    # If any sensor data is older than this, trigger STOP_YIELD
+
+    # Time To Collision (TTC) Safety Thresholds
+    ttc_critical_min: 0.0           # Minimum TTC for critical condition (seconds)
+    ttc_critical_max: 2.5           # Maximum TTC for critical condition (seconds)
+                                    # If 0.0 < TTC < 2.5, trigger immediate STOP_YIELD
+
+    # Pedestrian Motion Analysis
+    speed_standing_threshold: 0.1   # Speed below this is considered "standing still" (m/s)
+                                    # Used to distinguish between SLOW_CAUTION and patience logic
+
+    # Patience Logic (for moving pedestrians)
+    wait_patience_timeout: 2.0      # Time to wait before CREEP_PASS (seconds)
+                                    # Vehicle will STOP_WATCH for this duration before deciding
+                                    # to carefully pass a moving pedestrian

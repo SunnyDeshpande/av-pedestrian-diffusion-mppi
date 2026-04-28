@@ -1,0 +1,22 @@
+std_msgs/Header header
+
+uint16 manual_input
+uint16 command
+uint16 output
+
+uint16 HEADLIGHTS_OFF = 0
+uint16 HEADLIGHTS_MANUAL_LOW = 2
+uint16 HEADLIGHTS_MANUAL_HIGH = 3
+
+uint16 SHIFT_PARK = 0
+uint16 SHIFT_REVERSE = 1
+uint16 SHIFT_NEUTRAL = 2
+uint16 SHIFT_FORWARD = 3
+uint16 SHIFT_BETWEEN_GEARS = 5
+uint16 SHIFT_ERROR = 6
+uint16 SHIFT_NONE = 7
+
+uint16 TURN_RIGHT = 0
+uint16 TURN_NONE = 1
+uint16 TURN_LEFT = 2
+uint16 TURN_HAZARDS = 3

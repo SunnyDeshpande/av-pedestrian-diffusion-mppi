@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>adapt_full</name>
+  <version>0.0.0</version>
+  <description>Adapt full integration package with lidar processing</description>
+  <maintainer email="sunny@example.com">Sunny Deshpande</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- Core ROS2 dependencies -->
+  <depend>rclpy</depend>
+
+  <!-- Message dependencies for lidar processing -->
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <!-- Message dependencies for vehicle control -->
+  <depend>pacmod2_msgs</depend>
+  <depend>septentrio_gnss_driver</depend>
+
+  <!-- TF2 for coordinate transformations -->
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+
+  <!-- Python dependencies -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-pygame</exec_depend>
+  <exec_depend>python3-pymap3d</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
