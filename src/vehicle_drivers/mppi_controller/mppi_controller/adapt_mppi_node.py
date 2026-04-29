@@ -40,7 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy
 from ament_index_python.packages import get_package_share_directory
 
-from std_msgs.msg import Bool, Int32MultiArray
+from std_msgs.msg import Bool, Int32MultiArray, Float32MultiArray
 from sensor_msgs.msg import NavSatFix
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Point, PoseStamped
@@ -173,6 +173,10 @@ class AdaptMPPINode(Node):
         # Set to e.g. 'cuda:0' to force GPU, 'cpu' to force CPU.
         self.declare_parameter('mppi/device', '')
 
+        # 'raw': use /fusion_pedestrian_position (static xy obstacles)
+        # 'predicted': use /pedestrian_predictions_tensor (M×20×2 trajectories → velocity-aware)
+        self.declare_parameter('prediction_source', 'raw')
+
         self.declare_parameter('pid/kp', 0.6)
         self.declare_parameter('pid/ki', 0.0)
         self.declare_parameter('pid/kd', 0.1)
@@ -234,14 +238,30 @@ class AdaptMPPINode(Node):
         self.obstacles = np.zeros((0, 2))
         self._pacmod_primed = False
         self._v_cmd = 0.0
+        self.prediction_source = str(p('prediction_source'))
 
         self.create_subscription(NavSatFix, '/navsatfix', self._gnss_cb, 10)
         self.create_subscription(INSNavGeod, '/insnavgeod', self._ins_cb, 10)
         self.create_subscription(Bool, '/pacmod/enabled', self._enable_cb, 10)
         self.create_subscription(VehicleSpeedRpt, '/pacmod/vehicle_speed_rpt',
                                  self._speed_cb, 10)
-        self.create_subscription(Int32MultiArray, '/fusion_pedestrian_position',
-                                 self._ped_cb, 10)
+
+        if self.prediction_source == 'predicted':
+            self.create_subscription(
+                Float32MultiArray, '/pedestrian_predictions_tensor',
+                self._pred_tensor_cb, 10,
+            )
+            self.get_logger().info(
+                'Obstacle source: /pedestrian_predictions_tensor (velocity-aware)'
+            )
+        else:
+            self.create_subscription(
+                Int32MultiArray, '/fusion_pedestrian_position',
+                self._ped_cb, 10,
+            )
+            self.get_logger().info(
+                'Obstacle source: /fusion_pedestrian_position (raw detections)'
+            )
 
         self.global_pub = self.create_publisher(GlobalCmd, '/pacmod/global_cmd', 10)
         self.gear_pub = self.create_publisher(SystemCmdInt, '/pacmod/shift_cmd', 10)
@@ -365,6 +385,60 @@ class AdaptMPPINode(Node):
             yw = ey + xe * math.sin(yaw) + ye * math.cos(yaw)
             out.append((xw, yw))
         self.obstacles = np.asarray(out, dtype=float) if out else np.zeros((0, 2))
+
+    def _pred_tensor_cb(self, msg: Float32MultiArray):
+        """Decode (M, H, 2) predicted trajectories into (M, 5) obstacles.
+
+        The tensor arrives in ego frame. We transform each pedestrian's
+        current position to world frame and compute velocity from the
+        first two predicted steps.
+        """
+        if not msg.data:
+            self.obstacles = np.zeros((0, 5))
+            return
+        if self.lat == 0.0 and self.lon == 0.0:
+            self.obstacles = np.zeros((0, 5))
+            return
+
+        # Recover shape from layout
+        dims = msg.layout.dim
+        if len(dims) >= 3:
+            M = dims[0].size
+            H = dims[1].size
+        elif len(dims) == 2:
+            M = dims[0].size
+            H = dims[1].size
+        else:
+            self.obstacles = np.zeros((0, 5))
+            return
+
+        arr = np.array(msg.data, dtype=np.float32).reshape(M, H, 2)
+
+        ex, ey, yaw = self._get_gem_state()
+        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+
+        obs = np.zeros((M, 5), dtype=np.float64)
+        dt = 0.25  # prediction step interval (5s / 20 pts)
+        for i in range(M):
+            # Current position (first prediction point) in ego frame
+            xe, ye = float(arr[i, 0, 0]), float(arr[i, 0, 1])
+            # Transform to world frame
+            xw = ex + xe * cos_y - ye * sin_y
+            yw = ey + xe * sin_y + ye * cos_y
+
+            # Velocity from first two points (ego frame, then rotate to world)
+            if H >= 2:
+                dx_e = float(arr[i, 1, 0] - arr[i, 0, 0])
+                dy_e = float(arr[i, 1, 1] - arr[i, 0, 1])
+                vx_e, vy_e = dx_e / dt, dy_e / dt
+                vx_w = vx_e * cos_y - vy_e * sin_y
+                vy_w = vx_e * sin_y + vy_e * cos_y
+            else:
+                vx_w, vy_w = 0.0, 0.0
+
+            obs[i] = [xw, yw, vx_w, vy_w, 0.8]  # conf=0.8
+
+        self.obstacles = obs
 
     # --- geometry -------------------------------------------------------
     def _get_gem_state(self):
@@ -519,7 +593,8 @@ class AdaptMPPINode(Node):
         clear2.action = Marker.DELETEALL
         obs_msg.markers.append(clear2)
         r = float(self.mppi.clearance)
-        for i, (ox, oy) in enumerate(self.obstacles):
+        for i in range(len(self.obstacles)):
+            ox, oy = float(self.obstacles[i, 0]), float(self.obstacles[i, 1])
             m = Marker()
             m.header.frame_id = self.viz_frame
             m.header.stamp = stamp
@@ -527,8 +602,8 @@ class AdaptMPPINode(Node):
             m.id = i + 1
             m.type = Marker.CYLINDER
             m.action = Marker.ADD
-            m.pose.position.x = float(ox)
-            m.pose.position.y = float(oy)
+            m.pose.position.x = ox
+            m.pose.position.y = oy
             m.pose.position.z = 0.0
             m.pose.orientation.w = 1.0
             m.scale.x = 2.0 * r

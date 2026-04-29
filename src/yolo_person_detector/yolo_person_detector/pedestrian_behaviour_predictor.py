@@ -5,7 +5,7 @@ from rclpy.node import Node
 
 from geometry_msgs.msg import Point, Twist, TransformStamped
 from visualization_msgs.msg import Marker
-from std_msgs.msg import Int32MultiArray, Float64
+from std_msgs.msg import Int32MultiArray, Float64, Float32MultiArray, MultiArrayDimension
 
 from pacmod2_msgs.msg import VehicleSpeedRpt
 
@@ -47,6 +47,10 @@ class PedestrianBehaviorPredictor(Node):
         # ------- Outputs -------
         self.pub_ped_motion = self.create_publisher(Twist, 'pedestrian_motion', 10)
         self.pub_ped_ttc = self.create_publisher(Float64, 'pedestrian_ttc', 10)
+
+        self.pub_tensor = self.create_publisher(
+            Float32MultiArray, 'pedestrian_predictions_tensor', 10,
+        )
 
         # ------- RViz markers -------
         self.pub_person_marker = self.create_publisher(Marker, 'fusion_person_marker', 10)
@@ -325,20 +329,21 @@ class PedestrianBehaviorPredictor(Node):
         t_now = float(now.nanoseconds) * 1e-9
 
         detections = []
-        if len(msg.data) >= 2:
-            dist = float(msg.data[0])
-            direction_deg = float(msg.data[1])
-            theta = np.deg2rad(direction_deg)
+        if len(msg.data) >= 2 and len(msg.data) % 2 == 0:
+            for i in range(0, len(msg.data), 2):
+                dist = float(msg.data[i])
+                direction_deg = float(msg.data[i + 1])
+                theta = np.deg2rad(direction_deg)
 
-            # 0° = right side -> negative lateral y
-            # 90° = forward -> +x
-            # 180° = left -> +y
-            # 270° = backward -> -x
-            x = dist * np.sin(theta)     # forward
-            y = -dist * np.cos(theta)    # lateral
-            z = 0.0                      # up 
+                # 0° = right side -> negative lateral y
+                # 90° = forward -> +x
+                # 180° = left -> +y
+                # 270° = backward -> -x
+                x = dist * np.sin(theta)     # forward
+                y = -dist * np.cos(theta)    # lateral
+                z = 0.0                      # up
 
-            detections.append({'x': x, 'y': y, 'z': z})
+                detections.append({'x': x, 'y': y, 'z': z})
 
         deleted_ids = self._update_tracks(detections, t_now)
 
@@ -419,8 +424,45 @@ class PedestrianBehaviorPredictor(Node):
             ttc_msg.data = float(ttc_value)  # seconds, inf if no collision
             self.pub_ped_ttc.publish(ttc_msg)
 
+        # Publish predictions tensor for all tracked pedestrians
+        self._publish_predictions_tensor()
+
         # RViz markers
         self._publish_markers(stamp_msg)
+
+    # ------- Predictions tensor publishing -------
+    def _publish_predictions_tensor(self):
+        """Publish (M, H, 2) Float32MultiArray of all tracked pedestrian predictions."""
+        tracks_with_pred = [
+            tr for tr in self.tracks.values()
+            if len(tr['predicted_path']) > 0
+        ]
+        if not tracks_with_pred:
+            return
+
+        H = self.prediction_points
+        M = len(tracks_with_pred)
+        tensor = np.zeros((M, H, 2), dtype=np.float32)
+
+        for i, tr in enumerate(tracks_with_pred):
+            pred = tr['predicted_path']
+            n = min(len(pred), H)
+            for j in range(n):
+                tensor[i, j, 0] = float(pred[j][0])  # x
+                tensor[i, j, 1] = float(pred[j][1])  # y
+            # If fewer than H points, repeat last position
+            if n < H and n > 0:
+                tensor[i, n:, 0] = tensor[i, n - 1, 0]
+                tensor[i, n:, 1] = tensor[i, n - 1, 1]
+
+        msg = Float32MultiArray()
+        msg.layout.dim = [
+            MultiArrayDimension(label='M', size=M, stride=M * H * 2),
+            MultiArrayDimension(label='H', size=H, stride=H * 2),
+            MultiArrayDimension(label='xy', size=2, stride=2),
+        ]
+        msg.data = tensor.flatten().tolist()
+        self.pub_tensor.publish(msg)
 
     # ------- Marker publishing -------
     def _publish_markers(self, stamp_msg):
