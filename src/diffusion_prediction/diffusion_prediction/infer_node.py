@@ -9,7 +9,6 @@ import math
 import os
 
 import numpy as np
-from scipy.interpolate import UnivariateSpline
 
 import rclpy
 from rclpy.node import Node
@@ -26,6 +25,7 @@ from diffusion_prediction.utils import (
     build_marker_msg,
     build_twist_msg,
     build_predictions_tensor,
+    smooth_single_trajectory,
 )
 
 
@@ -88,7 +88,7 @@ class DiffusionPredictorNode(Node):
 
         # Temporal EMA state: track_id -> previous best trajectory (20, 2)
         self._prev_trajs: dict[int, np.ndarray] = {}
-        self._temporal_alpha = 0.5  # blend: 0=all previous, 1=all current
+        self._temporal_alpha = 0.3  # blend: 0=all previous, 1=all current
 
         # --------------- Model ---------------
         self.model = None
@@ -234,54 +234,66 @@ class DiffusionPredictorNode(Node):
                 self.model, self.schedule, hist_t, mask_t, ego_t, K=self.K,
             )
 
-        # Best-mode selection per track
+        # --- Physics-based filtering + best-mode selection per track ---
         best_trajs = np.zeros((M, 20, 2), dtype=np.float32)
         for m_idx in range(M):
             tid = active_ids[m_idx]
-            samples = futures[m_idx]  # (K, 20, 2)
+            samples_np = futures[m_idx].cpu().numpy()  # (K, 20, 2)
 
-            # Closest-to-mean selection with sticky temporal
-            mean_path = samples.mean(dim=0)  # (20, 2)
-            cost = ((samples - mean_path.unsqueeze(0)) ** 2).sum(dim=(1, 2))  # (K,)
-            cand_idx = cost.argmin().item()
-            cand_cost = cost[cand_idx].item()
+            # Physics check: reject implausible samples before mode selection
+            from diffusion_prediction.utils import _check_physics
+            valid = _check_physics(samples_np, dt=0.25, max_speed=3.5, max_accel=4.0)
 
+            # Use median of valid samples as robust center
+            valid_idx = np.where(valid)[0]
+            if len(valid_idx) >= 3:
+                center = np.median(samples_np[valid_idx], axis=0)
+            else:
+                center = np.median(samples_np, axis=0)
+                valid_idx = np.arange(len(samples_np))
+
+            # Closest-to-median among valid samples
+            cost = ((samples_np[valid_idx] - center[None]) ** 2).sum(axis=(1, 2))
+            cand_local = cost.argmin()
+            cand_idx = valid_idx[cand_local]
+            cand_cost = cost[cand_local]
+
+            # Sticky temporal: avoid jumping between modes
             prev = self._sticky_state.get(tid)
             if prev is not None:
                 prev_idx, consec = prev
-                if prev_idx < self.K:
-                    prev_cost = cost[prev_idx].item()
-                    if prev_cost > 1.5 * cand_cost:
-                        consec += 1
-                        if consec >= 3:
-                            # Switch
-                            chosen_idx = cand_idx
-                            self._sticky_state[tid] = (chosen_idx, 0)
+                if prev_idx in valid_idx:
+                    prev_local = np.where(valid_idx == prev_idx)[0]
+                    if len(prev_local) > 0:
+                        prev_cost = cost[prev_local[0]]
+                        if prev_cost > 1.5 * cand_cost:
+                            consec += 1
+                            if consec >= 3:
+                                chosen_idx = cand_idx
+                                self._sticky_state[tid] = (chosen_idx, 0)
+                            else:
+                                chosen_idx = prev_idx
+                                self._sticky_state[tid] = (prev_idx, consec)
                         else:
                             chosen_idx = prev_idx
-                            self._sticky_state[tid] = (prev_idx, consec)
+                            self._sticky_state[tid] = (prev_idx, 0)
                     else:
-                        chosen_idx = prev_idx
-                        self._sticky_state[tid] = (prev_idx, 0)
+                        chosen_idx = cand_idx
+                        self._sticky_state[tid] = (chosen_idx, 0)
                 else:
+                    # Previous choice is no longer physics-valid
                     chosen_idx = cand_idx
                     self._sticky_state[tid] = (chosen_idx, 0)
             else:
                 chosen_idx = cand_idx
                 self._sticky_state[tid] = (chosen_idx, 0)
 
-            best_trajs[m_idx] = samples[chosen_idx].cpu().numpy()
+            best_trajs[m_idx] = samples_np[chosen_idx]
 
         # --- Smooth predictions ---
-        # 1) Spline smoothing per trajectory (spatial)
-        t_axis = np.arange(self.pred_pts)
+        # 1) Spline smoothing per trajectory
         for m_idx in range(M):
-            for dim in range(2):
-                try:
-                    spl = UnivariateSpline(t_axis, best_trajs[m_idx, :, dim], s=12.0)
-                    best_trajs[m_idx, :, dim] = spl(t_axis)
-                except Exception:
-                    pass
+            best_trajs[m_idx] = smooth_single_trajectory(best_trajs[m_idx], s_factor=50.0)
 
         # 2) Temporal EMA: blend with previous frame for stability
         for m_idx, tid in enumerate(active_ids):

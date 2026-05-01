@@ -29,13 +29,13 @@ import time
 
 import numpy as np
 import torch
-from scipy.interpolate import UnivariateSpline
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from diffusion_prediction.model import TrajectoryDenoiser
 from diffusion_prediction.model_joint import JointTrajectoryDenoiser
 from diffusion_prediction.ddpm import CosineSchedule, ddim_sample_loop, ddim_sample_loop_joint
+from diffusion_prediction.utils import filter_and_smooth_trajectories
 
 
 # ---- Trajectory generators ----
@@ -225,38 +225,9 @@ def predict_joint(model, schedule, histories_np, masks_np, max_agents, device, K
     return futures[0, :, :M_real].cpu().numpy()  # (K, M_real, 20, 2)
 
 
-def smooth_predictions(preds, s_factor=12.0):
-    """Smooth predicted trajectories with a spline fit.
-
-    The raw diffusion output can be jagged (noisy per-step positions).
-    A spline fit produces physically plausible smooth curves that
-    preserve the overall trajectory shape and endpoints.
-
-    Parameters
-    ----------
-    preds : (K, T, 2) or (K, M, T, 2) numpy array
-    s_factor : float — spline smoothing factor (higher = smoother)
-
-    Returns
-    -------
-    smoothed : same shape as preds
-    """
-    original_shape = preds.shape
-    # Flatten to (..., T, 2) — iterate over all trajectories
-    T = preds.shape[-2]
-    t_axis = np.arange(T)
-    flat = preds.reshape(-1, T, 2)
-    out = flat.copy()
-
-    for i in range(len(flat)):
-        for dim in range(2):
-            try:
-                spl = UnivariateSpline(t_axis, flat[i, :, dim], s=s_factor)
-                out[i, :, dim] = spl(t_axis)
-            except Exception:
-                pass  # keep raw if spline fails
-
-    return out.reshape(original_shape)
+def smooth_predictions(preds, s_factor=50.0):
+    """Physics-based filtering + spline smoothing. Delegates to shared utility."""
+    return filter_and_smooth_trajectories(preds, s_factor=s_factor)
 
 
 def main():
@@ -366,7 +337,7 @@ def main():
 
     # Temporal EMA state for cross-frame smoothing
     # Keyed by scenario_idx so resets between scenarios
-    temporal_alpha = 0.4  # blend factor: 0=all previous, 1=all current
+    temporal_alpha = 0.25  # blend factor: 0=all previous, 1=all current
     prev_preds = {}  # scenario_idx -> previous frame's smoothed predictions (abs)
 
     for fi, frame in enumerate(all_frames):
