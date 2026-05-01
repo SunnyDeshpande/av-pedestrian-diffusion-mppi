@@ -29,6 +29,7 @@ import time
 
 import numpy as np
 import torch
+from scipy.ndimage import uniform_filter1d
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -224,6 +225,30 @@ def predict_joint(model, schedule, histories_np, masks_np, max_agents, device, K
     return futures[0, :, :M_real].cpu().numpy()  # (K, M_real, 20, 2)
 
 
+def smooth_predictions(preds, window=5):
+    """Smooth predicted trajectories with a moving average.
+
+    The raw diffusion output can be jagged (noisy per-step positions).
+    A light uniform filter produces visually clean, physically plausible
+    trajectories without changing the overall shape.
+
+    Parameters
+    ----------
+    preds : (..., T, 2) numpy array — last two dims are (timesteps, xy)
+    window : int — smoothing window size
+
+    Returns
+    -------
+    smoothed : same shape as preds
+    """
+    smoothed = np.copy(preds)
+    # Timestep is the second-to-last axis: (K, T, 2) or (K, M, T, 2)
+    t_axis = preds.ndim - 2
+    smoothed[..., 0] = uniform_filter1d(preds[..., 0], size=window, axis=t_axis, mode="nearest")
+    smoothed[..., 1] = uniform_filter1d(preds[..., 1], size=window, axis=t_axis, mode="nearest")
+    return smoothed
+
+
 def main():
     args = parse_args()
 
@@ -333,6 +358,7 @@ def main():
         if args.model == "single":
             preds = predict_single(model, schedule, frame["hist_ego"],
                                    device, K=args.K)  # (K, 20, 2)
+            preds = smooth_predictions(preds, window=5)
             # Convert to absolute coordinates
             preds_abs = preds + frame["origin"]
             predictions.append(preds_abs)
@@ -341,6 +367,7 @@ def main():
             masks = [a["mask"] for a in frame["agents"]]
             preds = predict_joint(model, schedule, hists, masks,
                                   args.max_agents, device, K=args.K)
+            preds = smooth_predictions(preds, window=5)
             # (K, M, 20, 2) — convert each agent to absolute
             preds_abs = preds.copy()
             for m in range(len(frame["agents"])):
@@ -355,44 +382,45 @@ def main():
     print(f"Inference done in {time.perf_counter() - t0:.1f}s")
 
     # ---- Precompute fixed axis bounds per scenario ----
-    # Gather ALL points (history + predictions + GT) per scenario to find
-    # stable axis limits that never change during playback.
-    scenario_bounds = {}
+    # Use history + GT + median prediction (not outlier K samples) for tight bounds.
+    scenario_pts = {}
     for fi, frame in enumerate(all_frames):
         sc_idx = frame["scenario_idx"]
-        if sc_idx not in scenario_bounds:
-            scenario_bounds[sc_idx] = {"xmin": np.inf, "xmax": -np.inf,
-                                        "ymin": np.inf, "ymax": -np.inf}
-        bounds = scenario_bounds[sc_idx]
+        if sc_idx not in scenario_pts:
+            scenario_pts[sc_idx] = []
         preds = predictions[fi]
 
         if args.model == "single":
-            pts = [frame["hist_abs"], preds.reshape(-1, 2)]
+            scenario_pts[sc_idx].append(frame["hist_abs"])
+            # Use the mean trajectory instead of all K samples
+            scenario_pts[sc_idx].append(preds.mean(axis=0))
             if frame["gt_future_abs"] is not None:
-                pts.append(frame["gt_future_abs"])
+                scenario_pts[sc_idx].append(frame["gt_future_abs"])
         else:
-            pts = []
             for m, agent in enumerate(frame["agents"]):
-                pts.append(agent["hist_abs"])
+                scenario_pts[sc_idx].append(agent["hist_abs"])
                 if agent["gt_future_abs"] is not None:
-                    pts.append(agent["gt_future_abs"])
-            pts.append(preds.reshape(-1, 2))
+                    scenario_pts[sc_idx].append(agent["gt_future_abs"])
+            # Mean across K for each agent
+            scenario_pts[sc_idx].append(preds.mean(axis=0).reshape(-1, 2))
 
-        all_pts = np.concatenate(pts, axis=0)
-        bounds["xmin"] = min(bounds["xmin"], all_pts[:, 0].min())
-        bounds["xmax"] = max(bounds["xmax"], all_pts[:, 0].max())
-        bounds["ymin"] = min(bounds["ymin"], all_pts[:, 1].min())
-        bounds["ymax"] = max(bounds["ymax"], all_pts[:, 1].max())
+    scenario_bounds = {}
+    for sc_idx, pts_list in scenario_pts.items():
+        all_pts = np.concatenate(pts_list, axis=0)
+        # Use percentile to exclude any remaining outliers
+        xmin, xmax = np.percentile(all_pts[:, 0], [1, 99])
+        ymin, ymax = np.percentile(all_pts[:, 1], [1, 99])
 
-    # Add padding and ensure square aspect ratio
-    for sc_idx, bounds in scenario_bounds.items():
-        pad = 2.0
-        cx = (bounds["xmin"] + bounds["xmax"]) / 2
-        cy = (bounds["ymin"] + bounds["ymax"]) / 2
-        half_range = max(bounds["xmax"] - bounds["xmin"],
-                         bounds["ymax"] - bounds["ymin"]) / 2 + pad
-        bounds["xlim"] = (cx - half_range, cx + half_range)
-        bounds["ylim"] = (cy - half_range, cy + half_range)
+        pad = 3.0
+        cx = (xmin + xmax) / 2
+        cy = (ymin + ymax) / 2
+        half_range = max(xmax - xmin, ymax - ymin) / 2 + pad
+        # Ensure minimum visible range of 8m
+        half_range = max(half_range, 4.0)
+        scenario_bounds[sc_idx] = {
+            "xlim": (cx - half_range, cx + half_range),
+            "ylim": (cy - half_range, cy + half_range),
+        }
 
     # ---- Build animation ----
     COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
@@ -446,23 +474,30 @@ def main():
                         color="#2ca02c", linewidth=2, alpha=0.7,
                         zorder=3, label="Ground truth future")
 
-            # Predicted samples (fan)
-            for k in range(K):
-                trail = np.vstack([hist_abs[-1:], preds[k]])
-                ax.plot(trail[:, 0], trail[:, 1],
-                        color="#ff7f0e", alpha=0.12, linewidth=0.7, zorder=2)
-
-            # Best mode
+            # Filter outlier samples: only show those within 2 std of mean
             mean_traj = preds.mean(axis=0)
             dists = np.linalg.norm(preds - mean_traj[None], axis=-1).mean(axis=-1)
-            best_k = dists.argmin()
+            dist_threshold = np.median(dists) + 2.0 * dists.std()
+            inlier_mask = dists < dist_threshold
+
+            # Predicted samples (fan) — only inliers
+            for k in range(K):
+                if not inlier_mask[k]:
+                    continue
+                trail = np.vstack([hist_abs[-1:], preds[k]])
+                ax.plot(trail[:, 0], trail[:, 1],
+                        color="#ff7f0e", alpha=0.15, linewidth=0.8, zorder=2)
+
+            # Best mode (closest to mean among inliers)
+            best_k = np.where(inlier_mask)[0][dists[inlier_mask].argmin()]
             trail = np.vstack([hist_abs[-1:], preds[best_k]])
             ax.plot(trail[:, 0], trail[:, 1],
                     color="#ff7f0e", linewidth=2.5, alpha=0.9,
                     zorder=4, label="Predicted (best mode)")
 
-            # Endpoint scatter for all K samples
-            ax.scatter(preds[:, -1, 0], preds[:, -1, 1],
+            # Endpoint scatter for inlier samples
+            inlier_preds = preds[inlier_mask]
+            ax.scatter(inlier_preds[:, -1, 0], inlier_preds[:, -1, 1],
                        c="#ff7f0e", s=15, alpha=0.4, zorder=3, edgecolors="none")
 
         else:
@@ -491,20 +526,26 @@ def main():
                     ax.plot(trail[:, 0], trail[:, 1], "--",
                             color=color, linewidth=1.5, alpha=0.5, zorder=3)
 
-                for k in range(K):
-                    trail = np.vstack([hist_abs[-1:], preds[k, m]])
-                    ax.plot(trail[:, 0], trail[:, 1],
-                            color=color, alpha=0.08, linewidth=0.6, zorder=2)
-
                 agent_preds = preds[:, m]
                 mean_traj = agent_preds.mean(axis=0)
                 dists = np.linalg.norm(agent_preds - mean_traj[None], axis=-1).mean(axis=-1)
-                best_k = dists.argmin()
+                dist_threshold = np.median(dists) + 2.0 * dists.std()
+                inlier_mask = dists < dist_threshold
+
+                for k in range(K):
+                    if not inlier_mask[k]:
+                        continue
+                    trail = np.vstack([hist_abs[-1:], preds[k, m]])
+                    ax.plot(trail[:, 0], trail[:, 1],
+                            color=color, alpha=0.1, linewidth=0.6, zorder=2)
+
+                best_k = np.where(inlier_mask)[0][dists[inlier_mask].argmin()]
                 trail = np.vstack([hist_abs[-1:], preds[best_k, m]])
                 ax.plot(trail[:, 0], trail[:, 1],
                         color=color, linewidth=2.5, alpha=0.9, zorder=4)
 
-                ax.scatter(agent_preds[:, -1, 0], agent_preds[:, -1, 1],
+                inlier_agent = agent_preds[inlier_mask]
+                ax.scatter(inlier_agent[:, -1, 0], inlier_agent[:, -1, 1],
                            c=color, s=12, alpha=0.3, zorder=3, edgecolors="none")
 
         ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
