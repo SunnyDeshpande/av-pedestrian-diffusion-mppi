@@ -29,7 +29,7 @@ import time
 
 import numpy as np
 import torch
-from scipy.ndimage import uniform_filter1d
+from scipy.interpolate import UnivariateSpline
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -225,28 +225,38 @@ def predict_joint(model, schedule, histories_np, masks_np, max_agents, device, K
     return futures[0, :, :M_real].cpu().numpy()  # (K, M_real, 20, 2)
 
 
-def smooth_predictions(preds, window=5):
-    """Smooth predicted trajectories with a moving average.
+def smooth_predictions(preds, s_factor=12.0):
+    """Smooth predicted trajectories with a spline fit.
 
     The raw diffusion output can be jagged (noisy per-step positions).
-    A light uniform filter produces visually clean, physically plausible
-    trajectories without changing the overall shape.
+    A spline fit produces physically plausible smooth curves that
+    preserve the overall trajectory shape and endpoints.
 
     Parameters
     ----------
-    preds : (..., T, 2) numpy array — last two dims are (timesteps, xy)
-    window : int — smoothing window size
+    preds : (K, T, 2) or (K, M, T, 2) numpy array
+    s_factor : float — spline smoothing factor (higher = smoother)
 
     Returns
     -------
     smoothed : same shape as preds
     """
-    smoothed = np.copy(preds)
-    # Timestep is the second-to-last axis: (K, T, 2) or (K, M, T, 2)
-    t_axis = preds.ndim - 2
-    smoothed[..., 0] = uniform_filter1d(preds[..., 0], size=window, axis=t_axis, mode="nearest")
-    smoothed[..., 1] = uniform_filter1d(preds[..., 1], size=window, axis=t_axis, mode="nearest")
-    return smoothed
+    original_shape = preds.shape
+    # Flatten to (..., T, 2) — iterate over all trajectories
+    T = preds.shape[-2]
+    t_axis = np.arange(T)
+    flat = preds.reshape(-1, T, 2)
+    out = flat.copy()
+
+    for i in range(len(flat)):
+        for dim in range(2):
+            try:
+                spl = UnivariateSpline(t_axis, flat[i, :, dim], s=s_factor)
+                out[i, :, dim] = spl(t_axis)
+            except Exception:
+                pass  # keep raw if spline fails
+
+    return out.reshape(original_shape)
 
 
 def main():
@@ -354,24 +364,43 @@ def main():
     t0 = time.perf_counter()
     predictions = []
 
+    # Temporal EMA state for cross-frame smoothing
+    # Keyed by scenario_idx so resets between scenarios
+    temporal_alpha = 0.4  # blend factor: 0=all previous, 1=all current
+    prev_preds = {}  # scenario_idx -> previous frame's smoothed predictions (abs)
+
     for fi, frame in enumerate(all_frames):
+        sc_idx = frame["scenario_idx"]
+
         if args.model == "single":
             preds = predict_single(model, schedule, frame["hist_ego"],
                                    device, K=args.K)  # (K, 20, 2)
-            preds = smooth_predictions(preds, window=5)
+            preds = smooth_predictions(preds)
             # Convert to absolute coordinates
             preds_abs = preds + frame["origin"]
+
+            # Temporal EMA: blend with previous frame's prediction
+            if sc_idx in prev_preds and prev_preds[sc_idx].shape == preds_abs.shape:
+                preds_abs = temporal_alpha * preds_abs + (1 - temporal_alpha) * prev_preds[sc_idx]
+            prev_preds[sc_idx] = preds_abs.copy()
+
             predictions.append(preds_abs)
         else:
             hists = [a["hist_ego"] for a in frame["agents"]]
             masks = [a["mask"] for a in frame["agents"]]
             preds = predict_joint(model, schedule, hists, masks,
                                   args.max_agents, device, K=args.K)
-            preds = smooth_predictions(preds, window=5)
+            preds = smooth_predictions(preds)
             # (K, M, 20, 2) — convert each agent to absolute
             preds_abs = preds.copy()
             for m in range(len(frame["agents"])):
                 preds_abs[:, m] += frame["agents"][m]["origin"]
+
+            # Temporal EMA: blend with previous frame's prediction
+            if sc_idx in prev_preds and prev_preds[sc_idx].shape == preds_abs.shape:
+                preds_abs = temporal_alpha * preds_abs + (1 - temporal_alpha) * prev_preds[sc_idx]
+            prev_preds[sc_idx] = preds_abs.copy()
+
             predictions.append(preds_abs)
 
         if (fi + 1) % 20 == 0 or fi == len(all_frames) - 1:

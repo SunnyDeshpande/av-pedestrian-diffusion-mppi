@@ -9,6 +9,7 @@ import math
 import os
 
 import numpy as np
+from scipy.interpolate import UnivariateSpline
 
 import rclpy
 from rclpy.node import Node
@@ -84,6 +85,10 @@ class DiffusionPredictorNode(Node):
 
         # Sticky mode selection state: track_id -> (prev_idx, consecutive_count)
         self._sticky_state: dict[int, tuple[int, int]] = {}
+
+        # Temporal EMA state: track_id -> previous best trajectory (20, 2)
+        self._prev_trajs: dict[int, np.ndarray] = {}
+        self._temporal_alpha = 0.5  # blend: 0=all previous, 1=all current
 
         # --------------- Model ---------------
         self.model = None
@@ -266,6 +271,32 @@ class DiffusionPredictorNode(Node):
                 self._sticky_state[tid] = (chosen_idx, 0)
 
             best_trajs[m_idx] = samples[chosen_idx].cpu().numpy()
+
+        # --- Smooth predictions ---
+        # 1) Spline smoothing per trajectory (spatial)
+        t_axis = np.arange(self.pred_pts)
+        for m_idx in range(M):
+            for dim in range(2):
+                try:
+                    spl = UnivariateSpline(t_axis, best_trajs[m_idx, :, dim], s=12.0)
+                    best_trajs[m_idx, :, dim] = spl(t_axis)
+                except Exception:
+                    pass
+
+        # 2) Temporal EMA: blend with previous frame for stability
+        for m_idx, tid in enumerate(active_ids):
+            if tid in self._prev_trajs:
+                best_trajs[m_idx] = (
+                    self._temporal_alpha * best_trajs[m_idx]
+                    + (1 - self._temporal_alpha) * self._prev_trajs[tid]
+                )
+            self._prev_trajs[tid] = best_trajs[m_idx].copy()
+
+        # Clean up temporal state for deleted tracks
+        active_set = set(active_ids)
+        for tid in list(self._prev_trajs.keys()):
+            if tid not in active_set and tid not in self.tracker.tracks:
+                del self._prev_trajs[tid]
 
         # --- Select primary pedestrian ---
         # Transform back: add current position offset (undo the origin centering in get_history)
