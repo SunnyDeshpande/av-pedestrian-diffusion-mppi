@@ -354,29 +354,89 @@ def main():
 
     print(f"Inference done in {time.perf_counter() - t0:.1f}s")
 
+    # ---- Precompute fixed axis bounds per scenario ----
+    # Gather ALL points (history + predictions + GT) per scenario to find
+    # stable axis limits that never change during playback.
+    scenario_bounds = {}
+    for fi, frame in enumerate(all_frames):
+        sc_idx = frame["scenario_idx"]
+        if sc_idx not in scenario_bounds:
+            scenario_bounds[sc_idx] = {"xmin": np.inf, "xmax": -np.inf,
+                                        "ymin": np.inf, "ymax": -np.inf}
+        bounds = scenario_bounds[sc_idx]
+        preds = predictions[fi]
+
+        if args.model == "single":
+            pts = [frame["hist_abs"], preds.reshape(-1, 2)]
+            if frame["gt_future_abs"] is not None:
+                pts.append(frame["gt_future_abs"])
+        else:
+            pts = []
+            for m, agent in enumerate(frame["agents"]):
+                pts.append(agent["hist_abs"])
+                if agent["gt_future_abs"] is not None:
+                    pts.append(agent["gt_future_abs"])
+            pts.append(preds.reshape(-1, 2))
+
+        all_pts = np.concatenate(pts, axis=0)
+        bounds["xmin"] = min(bounds["xmin"], all_pts[:, 0].min())
+        bounds["xmax"] = max(bounds["xmax"], all_pts[:, 0].max())
+        bounds["ymin"] = min(bounds["ymin"], all_pts[:, 1].min())
+        bounds["ymax"] = max(bounds["ymax"], all_pts[:, 1].max())
+
+    # Add padding and ensure square aspect ratio
+    for sc_idx, bounds in scenario_bounds.items():
+        pad = 2.0
+        cx = (bounds["xmin"] + bounds["xmax"]) / 2
+        cy = (bounds["ymin"] + bounds["ymax"]) / 2
+        half_range = max(bounds["xmax"] - bounds["xmin"],
+                         bounds["ymax"] - bounds["ymin"]) / 2 + pad
+        bounds["xlim"] = (cx - half_range, cx + half_range)
+        bounds["ylim"] = (cy - half_range, cy + half_range)
+
     # ---- Build animation ----
     COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
 
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(10, 10))
+    fig.subplots_adjust(left=0.08, right=0.95, top=0.90, bottom=0.08)
 
     def animate(fi):
         ax.cla()
         frame = all_frames[fi]
         preds = predictions[fi]
         K = args.K
+        sc_idx = frame["scenario_idx"]
+        bounds = scenario_bounds[sc_idx]
+
+        # Fixed axis limits — never changes within a scenario
+        ax.set_xlim(bounds["xlim"])
+        ax.set_ylim(bounds["ylim"])
+        ax.set_aspect("equal")
+        ax.grid(True, alpha=0.3, linewidth=0.5)
+        ax.set_xlabel("x (m)", fontsize=11)
+        ax.set_ylabel("y (m)", fontsize=11)
 
         ax.set_title(frame["scenario_name"], fontsize=14, fontweight="bold", pad=10)
 
         if args.model == "single":
             hist_abs = frame["hist_abs"]
 
-            # History trail
-            ax.plot(hist_abs[:, 0], hist_abs[:, 1], "o-",
-                    color=COLORS[0], linewidth=2.5, markersize=4,
-                    zorder=5, label="Observed")
+            # Faded trail (older history points fade out)
+            n_hist = len(hist_abs)
+            for j in range(max(0, n_hist - 2), n_hist - 1):
+                alpha = 0.3 + 0.7 * (j / max(n_hist - 1, 1))
+                ax.plot(hist_abs[j:j+2, 0], hist_abs[j:j+2, 1],
+                        "-", color=COLORS[0], linewidth=2.5, alpha=alpha, zorder=5)
+
+            # History dots
+            alphas = np.linspace(0.2, 1.0, n_hist)
+            for j in range(n_hist):
+                ax.plot(hist_abs[j, 0], hist_abs[j, 1], "o",
+                        color=COLORS[0], markersize=3, alpha=alphas[j], zorder=5)
+
             # Current position marker
             ax.plot(hist_abs[-1, 0], hist_abs[-1, 1], "s",
-                    color=COLORS[0], markersize=10, zorder=6)
+                    color=COLORS[0], markersize=10, zorder=6, label="Current position")
 
             # Ground truth future
             if frame["gt_future_abs"] is not None:
@@ -384,13 +444,13 @@ def main():
                 trail = np.vstack([hist_abs[-1:], gt])
                 ax.plot(trail[:, 0], trail[:, 1], "--",
                         color="#2ca02c", linewidth=2, alpha=0.7,
-                        zorder=3, label="Ground truth")
+                        zorder=3, label="Ground truth future")
 
-            # Predicted samples
+            # Predicted samples (fan)
             for k in range(K):
                 trail = np.vstack([hist_abs[-1:], preds[k]])
                 ax.plot(trail[:, 0], trail[:, 1],
-                        color="#ff7f0e", alpha=0.15, linewidth=0.8, zorder=2)
+                        color="#ff7f0e", alpha=0.12, linewidth=0.7, zorder=2)
 
             # Best mode
             mean_traj = preds.mean(axis=0)
@@ -399,19 +459,31 @@ def main():
             trail = np.vstack([hist_abs[-1:], preds[best_k]])
             ax.plot(trail[:, 0], trail[:, 1],
                     color="#ff7f0e", linewidth=2.5, alpha=0.9,
-                    zorder=4, label="Predicted (best)")
+                    zorder=4, label="Predicted (best mode)")
+
+            # Endpoint scatter for all K samples
+            ax.scatter(preds[:, -1, 0], preds[:, -1, 1],
+                       c="#ff7f0e", s=15, alpha=0.4, zorder=3, edgecolors="none")
 
         else:
             for m, agent in enumerate(frame["agents"]):
                 color = COLORS[m % len(COLORS)]
                 hist_abs = agent["hist_abs"]
                 label_prefix = f"Ped {chr(65 + m)}"
+                n_hist = len(hist_abs)
 
-                ax.plot(hist_abs[:, 0], hist_abs[:, 1], "o-",
-                        color=color, linewidth=2.5, markersize=3,
-                        zorder=5, label=f"{label_prefix} observed")
+                # Faded trail
+                alphas = np.linspace(0.2, 1.0, n_hist)
+                for j in range(n_hist):
+                    ax.plot(hist_abs[j, 0], hist_abs[j, 1], "o",
+                            color=color, markersize=3, alpha=alphas[j], zorder=5)
+                if n_hist > 1:
+                    ax.plot(hist_abs[:, 0], hist_abs[:, 1], "-",
+                            color=color, linewidth=2, alpha=0.6, zorder=4)
+
                 ax.plot(hist_abs[-1, 0], hist_abs[-1, 1], "s",
-                        color=color, markersize=8, zorder=6)
+                        color=color, markersize=8, zorder=6,
+                        label=f"{label_prefix}")
 
                 if agent["gt_future_abs"] is not None:
                     gt = agent["gt_future_abs"]
@@ -422,7 +494,7 @@ def main():
                 for k in range(K):
                     trail = np.vstack([hist_abs[-1:], preds[k, m]])
                     ax.plot(trail[:, 0], trail[:, 1],
-                            color=color, alpha=0.1, linewidth=0.6, zorder=2)
+                            color=color, alpha=0.08, linewidth=0.6, zorder=2)
 
                 agent_preds = preds[:, m]
                 mean_traj = agent_preds.mean(axis=0)
@@ -430,20 +502,18 @@ def main():
                 best_k = dists.argmin()
                 trail = np.vstack([hist_abs[-1:], preds[best_k, m]])
                 ax.plot(trail[:, 0], trail[:, 1],
-                        color=color, linewidth=2.5, alpha=0.9,
-                        zorder=4, label=f"{label_prefix} predicted")
+                        color=color, linewidth=2.5, alpha=0.9, zorder=4)
 
-        ax.set_aspect("equal")
-        ax.grid(True, alpha=0.3)
-        ax.set_xlabel("x (m)", fontsize=11)
-        ax.set_ylabel("y (m)", fontsize=11)
-        ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+                ax.scatter(agent_preds[:, -1, 0], agent_preds[:, -1, 1],
+                           c=color, s=12, alpha=0.3, zorder=3, edgecolors="none")
+
+        ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
 
         # Time indicator
         step = frame["step"]
         t_sec = step * dt
         ax.text(0.98, 0.02, f"t = {t_sec:.1f}s",
-                transform=ax.transAxes, fontsize=12, fontweight="bold",
+                transform=ax.transAxes, fontsize=13, fontweight="bold",
                 ha="right", va="bottom",
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9))
 
@@ -451,11 +521,8 @@ def main():
         model_name = "Single-Agent" if args.model == "single" else "Joint Multi-Agent"
         ax.text(0.98, 0.98,
                 f"Diffusion {model_name}\nDDIM-10, K={K} samples",
-                transform=ax.transAxes, fontsize=8, ha="right", va="top",
+                transform=ax.transAxes, fontsize=9, ha="right", va="top",
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", alpha=0.9))
-
-        # Auto-scale with padding
-        ax.margins(0.15)
 
     print("Building animation...")
     anim = animation.FuncAnimation(
@@ -469,17 +536,16 @@ def main():
         if ext == ".gif":
             writer = animation.PillowWriter(fps=args.fps)
         else:
-            writer = animation.FFMpegWriter(fps=args.fps, bitrate=2000)
+            writer = animation.FFMpegWriter(fps=args.fps, bitrate=3000)
         print(f"Saving to {args.output} ...")
         anim.save(args.output, writer=writer)
         print(f"Saved: {args.output}")
     elif args.live:
         plt.show()
     else:
-        # Default: save as mp4
         out = "figures/demo_live.mp4"
         os.makedirs("figures", exist_ok=True)
-        writer = animation.FFMpegWriter(fps=args.fps, bitrate=2000)
+        writer = animation.FFMpegWriter(fps=args.fps, bitrate=3000)
         print(f"Saving to {out} ...")
         anim.save(out, writer=writer)
         print(f"Saved: {out}")
