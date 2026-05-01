@@ -1,0 +1,194 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{multicol}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{authblk}
+\usepackage{parskip}
+
+\titlespacing*{\section}{0pt}{6pt}{2pt}
+\titlespacing*{\subsection}{0pt}{4pt}{1pt}
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+\setlength{\columnsep}{0.3in}
+\setlist{nosep,leftmargin=*}
+
+\title{\vspace{-2em}\textbf{Adapt: Diffusion-Predicted Pedestrian Avoidance with MPPI Control on the Polaris GEM e4}\\[0.2em]\large CS 588 -- Group 10 Mid-Project Report}
+\author{Polaris GEM e4 Autonomy Team -- UIUC CS 588, Spring 2026}
+\date{\vspace{-1em}May 1, 2026}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+
+\begin{multicols}{2}
+
+\section{Project Overview}
+
+Our project, \textbf{Adapt}, builds an autonomous driving stack on the
+Polaris GEM e4 platform that combines a learning-based pedestrian
+trajectory predictor with a sampling-based motion planner.  Concretely,
+we replace the default Stanley lateral controller used in the AutoShield
+baseline with a \textbf{Model Predictive Path Integral (MPPI)} planner
+that reasons jointly over steering and acceleration, and we feed it
+multi-step pedestrian forecasts produced by a \textbf{diffusion
+trajectory predictor}.  The system is implemented in ROS~2 Humble and
+runs end-to-end on the GEM e4 using its Ouster OS1-128 LiDAR, OAK-D LR
+RGBD camera, Septentrio GNSS/INS, and PACMod2 drive-by-wire interface.
+
+The core technical contribution is a configurable pipeline with
+\emph{three} prediction modes (constant-velocity, single-agent
+diffusion, joint multi-agent diffusion) wired to \emph{two} controllers
+(MPPI or Stanley), all sharing a common topic contract.  This lets us
+compare a classical baseline against modern generative motion forecasts
+on the same vehicle, the same routes, and the same safety state machine.
+
+\section{System Architecture}
+
+The runtime stack is organized in four layers (Fig.~1, conceptual).
+
+\textbf{Perception.} \texttt{adapt\_lidar\_processing} runs DBSCAN on
+\texttt{/ouster/points} with human-geometry filters (height, width) and
+publishes polar pedestrian detections on
+\texttt{/lidar\_pedestrian\_position}.  In parallel,
+\texttt{rgbd\_pedestrian\_detector} runs YOLOv11 (COCO class~0) on the
+OAK-D RGB stream and back-projects the bounding-box centroid using the
+stereo depth image to publish
+\texttt{/rgbd\_pedestrian\_position}.
+
+\textbf{Fusion.} \texttt{lidar\_camera\_fusion} performs an approximate
+time-synced match between LiDAR and camera detections (100\,ms slop,
+2\,m Euclidean gate) and produces a single
+\texttt{/fusion\_pedestrian\_position} topic at $\sim$10\,Hz.  We weight
+distance 80/20 in favor of LiDAR (more accurate range) and bearing 30/70
+in favor of the camera (better angular resolution).
+
+\textbf{Prediction.} A single \texttt{infer\_node} consumes the fused
+pedestrian track and publishes future trajectories on
+\texttt{/pedestrian\_predictions\_tensor} (an $M{\times}20{\times}2$
+\texttt{Float32MultiArray}), plus legacy
+\texttt{/pedestrian\_motion} and \texttt{/pedestrian\_ttc} for the
+high-level decision node.  The active prediction model (constant
+velocity, single-agent diffusion, or joint diffusion) is selected by a
+launch argument so downstream nodes are mode-agnostic.
+
+\textbf{Control.} The MPPI node subscribes to either
+\texttt{/fusion\_pedestrian\_position} (raw, static-obstacle treatment)
+or \texttt{/pedestrian\_predictions\_tensor} (predicted trajectories with
+per-step covariance) and emits PACMod2 commands at 10\,Hz on
+\texttt{/pacmod/steering\_cmd}, \texttt{/pacmod/accel\_cmd}, and
+\texttt{/pacmod/brake\_cmd}.  A high-level state machine
+(\texttt{adapt\_high\_level\_command}) issues
+\texttt{CRUISE / SLOW\_CAUTION / STOP\_YIELD / CREEP\_PASS} states based
+on time-to-collision and pedestrian motion, providing a coarse
+safety overlay that is independent of the chosen predictor.
+
+\section{Diffusion Trajectory Predictor}
+
+Both diffusion variants use a MID-style Transformer denoiser trained
+with DDPM (100 train steps, cosine schedule) and sampled with DDIM-10 at
+inference.  The single-agent model
+(\texttt{TrajectoryDenoiser}, 0.47M parameters) predicts each
+pedestrian independently from a 20-frame history of $[x,y,v_x,v_y]$
+plus ego velocity, using a 4-layer Transformer encoder with 4 attention
+heads ($d_{\text{model}}{=}128$) and a cross-attention decoder over 20
+learned future queries.  The joint model
+(\texttt{JointTrajectoryDenoiser}, 0.93M parameters) shares the
+per-agent encoder, then applies two cross-agent attention layers so each
+pedestrian's prediction is conditioned on the trajectories of all
+others (up to 16 agents, padded with an agent mask).
+
+We pretrain on Argoverse~2 pedestrian splits and fine-tune on rosbags
+collected from the GEM~e4.  Current pretrained checkpoints reach
+\textbf{minFDE\,=\,0.693\,m} (single-agent) and \textbf{minFDE\,=\,0.529\,m}
+(joint) on the held-out AV2 split, with end-to-end inference latency of
+$\sim$9\,ms and $\sim$11\,ms respectively on an RTX~3060.  A
+sticky closest-to-mean selection picks a single trajectory per
+pedestrian from $K{=}20$ samples, switching modes only when the
+candidate beats the current selection by $1.5{\times}$ for three
+consecutive ticks; this eliminated TTC jitter we observed when picking
+the argmax sample each frame.
+
+\section{MPPI Motion Planner}
+
+The MPPI controller samples $K{=}600$ control sequences per tick over a
+horizon of $H{=}30$ steps at $dt{=}0.1$\,s, integrates them through a
+kinematic-bicycle model (state $(x,y,\psi,v)$, input $(a,\delta)$), and
+returns a softmax-weighted mean.  The cost function combines
+goal-position tracking ($w_{\text{pos}}{=}15$), velocity reference
+($w_{\text{vel}}{=}5$), a $|\delta|\cdot v$ stability term
+($w_{\text{curv}}{=}2$), a velocity-aware 2D Gaussian repulsion per
+pedestrian ($w_{\text{obs}}{=}150$), a hard clearance step
+($w_{\text{obs,hard}}{=}250$, 3\,m radius), and an exponential soft
+falloff ($w_{\text{obs,soft}}{=}40$).  When fed predicted trajectories,
+the obstacle ellipse \emph{grows} along the rollout horizon, so MPPI is
+quantitatively more cautious about pedestrians farther in the future.
+Hard caps from the AutoShield baseline are preserved: $|\delta|{\le}35^{\circ}$,
+$v_{\max}{=}5$\,m/s, $a_{\max}{=}2$\,m/s$^2$.
+
+\section{Progress to Date}
+
+\begin{itemize}
+  \item \textbf{Hardware bring-up (complete).} Ouster OS1-128, OAK-D LR,
+        Septentrio GNSS/INS, and PACMod2 are integrated under a single
+        \texttt{sensor\_init.launch.py} that uses a lifecycle handoff so
+        cameras, GNSS, and RViz only start once the lidar reaches
+        \texttt{active}.
+  \item \textbf{Baseline controllers (complete).} Pure pursuit and
+        Stanley controllers run end-to-end on the e4 with PID
+        longitudinal control; both gated on the LB+RB joystick enable.
+  \item \textbf{MPPI controller (complete, on-vehicle tested).} Torch
+        implementation runs on GPU; standalone Phase-1 test shows mean
+        $|e_{\text{lat}}|\!\approx\!0.007$\,m on the reference loop and
+        the planner reacts to injected static obstacles within one
+        cycle.
+  \item \textbf{Diffusion predictor (complete; fine-tuning in
+        progress).} Both single-agent and joint models are trained on
+        AV2 and integrated as a ROS~2 node; smoothing logic landed this
+        week (commits \texttt{4af6828}, \texttt{f43e25f},
+        \texttt{d1549dc}) to reduce per-frame mode flips.
+  \item \textbf{Sensor fusion + high-level safety (complete).} Fused
+        pedestrian topic at 10\,Hz drives both raw-mode MPPI and the
+        prediction node; high-level node outputs the four safety states
+        identically across all three prediction modes.
+\end{itemize}
+
+\section{Remaining Work}
+
+\textbf{(1) GEM rosbag fine-tuning.}  Pretrained AV2 weights are usable
+but UIUC pedestrians have a different speed/spacing distribution; we are
+extracting training windows from on-vehicle rosbags via
+\texttt{extract\_gem\_windows.py} and will fine-tune both checkpoints
+before final demos.
+\textbf{(2) On-vehicle A/B comparison.}  We will run identical routes
+under (i) Stanley + constant-velocity, (ii) MPPI + constant-velocity,
+and (iii) MPPI + joint diffusion, logging minimum clearance,
+intervention rate, and lap time as the primary metrics.
+\textbf{(3) Latency budget tightening.}  End-to-end perception$\to$control
+currently sits near 50\,ms; we want to push the diffusion-mode worst
+case under our 80\,ms warn threshold by batching DDIM steps on the GPU
+and avoiding a CPU round-trip in the tracker.
+\textbf{(4) Failure-mode analysis.}  We need a dedicated set of edge
+cases (occluded pedestrian behind a parked car, group of pedestrians
+crossing diagonally, false-positive detections from foliage) to
+characterize where each predictor wins or loses.
+
+\section{Risks and Mitigations}
+
+The largest open risk is \emph{prediction overconfidence}: a tight
+diffusion sample can underestimate variance when the pedestrian is
+about to change behavior, causing MPPI to plan too aggressively past
+them.  Our confidence-growth obstacle cost partially mitigates this,
+and the high-level safety node provides a hard \texttt{STOP\_YIELD}
+fallback when TTC drops below threshold regardless of which predictor
+is active.  A second risk is sensor degradation in low light or rain;
+the LiDAR/camera fusion weights deliberately keep LiDAR dominant on
+range so the system degrades gracefully if the camera channel drops out.
+
+\end{multicols}
+
+\end{document}
