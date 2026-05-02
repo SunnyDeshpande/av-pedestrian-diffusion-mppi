@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Joint multi-agent Transformer denoiser for pedestrian trajectory prediction.
 
-Extends the single-agent TrajectoryDenoiser with cross-agent attention
-so that each pedestrian's prediction is informed by the trajectories of
-all other pedestrians in the scene.
+v2: Upgraded architecture with multi-layer cross-attention decoder,
+wider dimensions, and more interaction capacity.
 
 Architecture:
-    1. Per-agent encoding (shared weights): history → TransformerEncoder
-    2. Agent interaction: mean-pool → cross-agent TransformerEncoder
-    3. Per-agent decoding: noisy future cross-attends to enriched history
+    1. Per-agent encoding (shared weights): history -> TransformerEncoder
+    2. Agent interaction: mean-pool -> cross-agent TransformerEncoder
+    3. Per-agent decoding: multi-layer decoder cross-attends to enriched history
 """
 
 import math
@@ -26,9 +25,10 @@ class JointTrajectoryDenoiser(nn.Module):
     d           : model dimension
     T_hist      : history length (timesteps)
     T_fut       : future length (timesteps)
-    max_agents  : maximum number of agents per scene (for learned embeddings)
+    max_agents  : maximum number of agents per scene
     nhead       : attention heads
     num_enc_layers       : per-agent encoder layers
+    num_dec_layers       : per-agent decoder layers
     num_interaction_layers : cross-agent interaction layers
     dim_ff      : feed-forward dimension
     dropout     : dropout rate
@@ -36,14 +36,15 @@ class JointTrajectoryDenoiser(nn.Module):
 
     def __init__(
         self,
-        d: int = 128,
+        d: int = 256,
         T_hist: int = 20,
         T_fut: int = 20,
         max_agents: int = 16,
-        nhead: int = 4,
-        num_enc_layers: int = 4,
-        num_interaction_layers: int = 2,
-        dim_ff: int = 256,
+        nhead: int = 8,
+        num_enc_layers: int = 6,
+        num_dec_layers: int = 4,
+        num_interaction_layers: int = 3,
+        dim_ff: int = 512,
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -52,7 +53,7 @@ class JointTrajectoryDenoiser(nn.Module):
         self.T_fut = T_fut
         self.max_agents = max_agents
 
-        # ---- Per-agent encoding (same as single-agent model) ----
+        # ---- Per-agent encoding ----
         self.hist_in = nn.Linear(4, d)
         self.hist_pos = nn.Parameter(torch.randn(T_hist, d) * 0.02)
 
@@ -83,13 +84,15 @@ class JointTrajectoryDenoiser(nn.Module):
         )
         self.interaction_proj = nn.Linear(d, d)
 
-        # ---- Per-agent decoder ----
+        # ---- Per-agent multi-layer decoder ----
         self.noisy_fut_in = nn.Linear(2, d)
         self.fut_pos = nn.Parameter(torch.randn(T_fut, d) * 0.02)
 
-        self.dec = nn.MultiheadAttention(d, nhead, batch_first=True, dropout=dropout)
-        self.dec_norm_q = nn.LayerNorm(d)
-        self.dec_norm_kv = nn.LayerNorm(d)
+        dec_layer = nn.TransformerDecoderLayer(
+            d_model=d, nhead=nhead, dim_feedforward=dim_ff,
+            dropout=dropout, batch_first=True, norm_first=True,
+        )
+        self.dec = nn.TransformerDecoder(dec_layer, num_layers=num_dec_layers)
 
         # Output head
         self.head = nn.Sequential(
@@ -176,17 +179,15 @@ class JointTrajectoryDenoiser(nn.Module):
         interaction_out = interaction_out.reshape(B * M, 1, self.d).expand(-1, T_h, -1)
         z = z + interaction_out                                  # enriched history
 
-        # ---- 3. Per-agent decoding ----
+        # ---- 3. Per-agent multi-layer decoder ----
         yt_flat = y_t.reshape(B * M, T_f, 2)
         q = self.noisy_fut_in(yt_flat) + self.fut_pos            # (B*M, T_f, d)
         q = q + ego_exp + tt_exp                                 # condition queries too
 
-        q_norm = self.dec_norm_q(q)
-        z_norm = self.dec_norm_kv(z)
-        dec_out, _ = self.dec(
-            q_norm, z_norm, z_norm, key_padding_mask=src_pad,
-        )
-        dec_out = dec_out + q                                    # residual
+        dec_out = self.dec(
+            q, z,
+            memory_key_padding_mask=src_pad,
+        )                                                        # (B*M, T_f, d)
 
         # ---- 4. Output ----
         eps_pred = self.head(dec_out)                            # (B*M, T_f, 2)

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""MID-style Transformer denoiser for pedestrian trajectory prediction."""
+"""MID-style Transformer denoiser for pedestrian trajectory prediction.
+
+v2: Upgraded architecture with multi-layer cross-attention decoder,
+wider dimensions, and more capacity for capturing non-linear motion.
+"""
 
 import math
 import torch
@@ -35,20 +39,30 @@ class TrajectoryDenoiser(nn.Module):
     """MID-style conditional trajectory denoiser.
 
     Encodes observed history + ego velocity + diffusion timestep,
-    then cross-attends from noisy-future queries to produce an
-    epsilon (noise) prediction of shape (B, T_fut, 2).
+    then a multi-layer cross-attention decoder attends from noisy-future
+    queries to produce an epsilon (noise) prediction of shape (B, T_fut, 2).
 
-    Parameters: ~3-4 M with default settings.
+    Parameters
+    ----------
+    d           : model dimension
+    T_hist      : history length (timesteps)
+    T_fut       : future/prediction length (timesteps)
+    nhead       : attention heads
+    num_enc_layers : encoder transformer layers
+    num_dec_layers : decoder cross-attention layers
+    dim_ff      : feed-forward hidden dimension
+    dropout     : dropout rate
     """
 
     def __init__(
         self,
-        d: int = 128,
+        d: int = 256,
         T_hist: int = 20,
         T_fut: int = 20,
-        nhead: int = 4,
-        num_layers: int = 4,
-        dim_ff: int = 256,
+        nhead: int = 8,
+        num_enc_layers: int = 6,
+        num_dec_layers: int = 4,
+        dim_ff: int = 512,
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -84,12 +98,18 @@ class TrajectoryDenoiser(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-        self.enc = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
+        self.enc = nn.TransformerEncoder(enc_layer, num_layers=num_enc_layers)
 
-        # Cross-attention decoder
-        self.dec = nn.MultiheadAttention(d, nhead, batch_first=True, dropout=dropout)
-        self.dec_norm_q = nn.LayerNorm(d)
-        self.dec_norm_kv = nn.LayerNorm(d)
+        # Multi-layer cross-attention decoder
+        dec_layer = nn.TransformerDecoderLayer(
+            d_model=d,
+            nhead=nhead,
+            dim_feedforward=dim_ff,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,
+        )
+        self.dec = nn.TransformerDecoder(dec_layer, num_layers=num_dec_layers)
 
         # Output head: per-token MLP -> (x, y) noise prediction
         self.head = nn.Sequential(
@@ -102,8 +122,6 @@ class TrajectoryDenoiser(nn.Module):
 
     def _log_param_count(self):
         n = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        # d=128, 4 enc layers, 1 cross-attn decoder -> ~650K params
-        # Smaller than typical MID (~3-4M) but faster inference
         print(f"[TrajectoryDenoiser] trainable params: {n:,} ({n/1e6:.2f}M)")
 
     def forward(
@@ -147,12 +165,11 @@ class TrajectoryDenoiser(nn.Module):
         q = self.noisy_fut_in(y_t) + self.fut_pos  # (B, T_fut, d)
         q = q + ego + tt  # also condition queries
 
-        # Cross-attention: queries attend to encoded history
-        q_norm = self.dec_norm_q(q)
-        z_norm = self.dec_norm_kv(z)
-        dec_out, _ = self.dec(q_norm, z_norm, z_norm,
-                              key_padding_mask=src_key_padding_mask)
-        dec_out = dec_out + q  # residual
+        # Multi-layer cross-attention decoder
+        dec_out = self.dec(
+            q, z,
+            memory_key_padding_mask=src_key_padding_mask,
+        )  # (B, T_fut, d)
 
         # Project to noise prediction
         eps_pred = self.head(dec_out)  # (B, T_fut, 2)

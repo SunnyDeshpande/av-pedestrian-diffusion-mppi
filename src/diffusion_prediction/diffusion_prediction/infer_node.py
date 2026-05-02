@@ -26,6 +26,8 @@ from diffusion_prediction.utils import (
     build_twist_msg,
     build_predictions_tensor,
     smooth_single_trajectory,
+    _check_physics,
+    _extrapolate_from_history,
 )
 
 
@@ -109,14 +111,19 @@ class DiffusionPredictorNode(Node):
             if self.prediction_mode == "joint":
                 from diffusion_prediction.model_joint import JointTrajectoryDenoiser
                 self.model = JointTrajectoryDenoiser(
-                    d=128, max_agents=self.max_agents,
+                    d=256, max_agents=self.max_agents,
+                    nhead=8, num_enc_layers=6, num_dec_layers=4,
+                    num_interaction_layers=3, dim_ff=512,
                 ).to(device)
                 self.get_logger().info(
                     f"Using joint multi-agent model (max_agents={self.max_agents})"
                 )
             else:
                 from diffusion_prediction.model import TrajectoryDenoiser
-                self.model = TrajectoryDenoiser().to(device)
+                self.model = TrajectoryDenoiser(
+                    d=256, nhead=8, num_enc_layers=6,
+                    num_dec_layers=4, dim_ff=512,
+                ).to(device)
                 self.get_logger().info("Using single-agent model")
 
             self.schedule = CosineSchedule(T=100).to(device)
@@ -241,18 +248,21 @@ class DiffusionPredictorNode(Node):
             samples_np = futures[m_idx].cpu().numpy()  # (K, 20, 2)
 
             # Physics check: reject implausible samples before mode selection
-            from diffusion_prediction.utils import _check_physics
             valid = _check_physics(samples_np, dt=0.25, max_speed=3.5, max_accel=4.0)
 
-            # Use median of valid samples as robust center
+            # Curvature-aware center: blend median with history extrapolation
             valid_idx = np.where(valid)[0]
             if len(valid_idx) >= 3:
-                center = np.median(samples_np[valid_idx], axis=0)
+                median_center = np.median(samples_np[valid_idx], axis=0)
             else:
-                center = np.median(samples_np, axis=0)
+                median_center = np.median(samples_np, axis=0)
                 valid_idx = np.arange(len(samples_np))
 
-            # Closest-to-median among valid samples
+            # Extrapolate from history curvature
+            extrap = _extrapolate_from_history(histories[m_idx], T_fut=20, dt=0.25)
+            center = 0.6 * extrap + 0.4 * median_center
+
+            # Closest-to-center among valid samples
             cost = ((samples_np[valid_idx] - center[None]) ** 2).sum(axis=(1, 2))
             cand_local = cost.argmin()
             cand_idx = valid_idx[cand_local]
@@ -311,9 +321,7 @@ class DiffusionPredictorNode(Node):
                 del self._prev_trajs[tid]
 
         # --- Select primary pedestrian ---
-        # Transform back: add current position offset (undo the origin centering in get_history)
-        # The model predicts in ego-centered frame at t=0, which is the current
-        # tracker position. Add it back.
+        # Transform back: add current position offset (undo the origin centering)
         for m_idx, tid in enumerate(active_ids):
             tr = self.tracker.tracks[tid]
             best_trajs[m_idx, :, 0] += tr.x

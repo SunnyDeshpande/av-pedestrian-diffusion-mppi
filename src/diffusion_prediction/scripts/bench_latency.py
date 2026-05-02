@@ -26,10 +26,11 @@ def main():
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--ckpt", type=str, default=None, help="Checkpoint path (optional)")
     parser.add_argument("--num-iters", type=int, default=100)
-    parser.add_argument("--d-model", type=int, default=128)
-    parser.add_argument("--nhead", type=int, default=4)
-    parser.add_argument("--num-layers", type=int, default=4)
-    parser.add_argument("--dim-ff", type=int, default=256)
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--nhead", type=int, default=8)
+    parser.add_argument("--num-enc-layers", type=int, default=6)
+    parser.add_argument("--num-dec-layers", type=int, default=4)
+    parser.add_argument("--dim-ff", type=int, default=512)
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -40,7 +41,8 @@ def main():
     model = TrajectoryDenoiser(
         d=args.d_model,
         nhead=args.nhead,
-        num_layers=args.num_layers,
+        num_enc_layers=args.num_enc_layers,
+        num_dec_layers=args.num_dec_layers,
         dim_ff=args.dim_ff,
     ).to(device)
 

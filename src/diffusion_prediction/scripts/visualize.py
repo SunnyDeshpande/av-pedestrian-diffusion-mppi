@@ -56,13 +56,13 @@ def parse_args():
     p.add_argument("--output", type=str, default=None, help="Output path (default: plt.show())")
     p.add_argument("--seed", type=int, default=42)
     # Architecture args (defaults match training)
-    p.add_argument("--d-model", type=int, default=128)
-    p.add_argument("--nhead", type=int, default=4)
-    p.add_argument("--num-layers", type=int, default=4)
-    p.add_argument("--dim-ff", type=int, default=256)
+    p.add_argument("--d-model", type=int, default=256)
+    p.add_argument("--nhead", type=int, default=8)
+    p.add_argument("--num-enc-layers", type=int, default=6)
+    p.add_argument("--num-dec-layers", type=int, default=4)
+    p.add_argument("--dim-ff", type=int, default=512)
     p.add_argument("--max-agents", type=int, default=16)
-    p.add_argument("--num-enc-layers", type=int, default=4)
-    p.add_argument("--num-interaction-layers", type=int, default=2)
+    p.add_argument("--num-interaction-layers", type=int, default=3)
     return p.parse_args()
 
 
@@ -229,12 +229,15 @@ def load_model(args, device):
     if args.model == "single":
         model = TrajectoryDenoiser(
             d=args.d_model, nhead=args.nhead,
-            num_layers=args.num_layers, dim_ff=args.dim_ff,
+            num_enc_layers=args.num_enc_layers,
+            num_dec_layers=args.num_dec_layers,
+            dim_ff=args.dim_ff,
         ).to(device)
     else:
         model = JointTrajectoryDenoiser(
             d=args.d_model, max_agents=args.max_agents,
             nhead=args.nhead, num_enc_layers=args.num_enc_layers,
+            num_dec_layers=args.num_dec_layers,
             num_interaction_layers=args.num_interaction_layers,
             dim_ff=args.dim_ff,
         ).to(device)

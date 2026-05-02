@@ -163,7 +163,8 @@ def train(args):
     model = TrajectoryDenoiser(
         d=args.d_model,
         nhead=args.nhead,
-        num_layers=args.num_layers,
+        num_enc_layers=args.num_enc_layers,
+        num_dec_layers=args.num_dec_layers,
         dim_ff=args.dim_ff,
     ).to(device)
 
@@ -323,10 +324,11 @@ def main():
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--ema-decay", type=float, default=0.999)
     parser.add_argument("--diffusion-T", type=int, default=100)
-    parser.add_argument("--d-model", type=int, default=128)
-    parser.add_argument("--nhead", type=int, default=4)
-    parser.add_argument("--num-layers", type=int, default=4)
-    parser.add_argument("--dim-ff", type=int, default=256)
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--nhead", type=int, default=8)
+    parser.add_argument("--num-enc-layers", type=int, default=6)
+    parser.add_argument("--num-dec-layers", type=int, default=4)
+    parser.add_argument("--dim-ff", type=int, default=512)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--pin-memory", action="store_true", default=True)
     parser.add_argument("--seed", type=int, default=1729)

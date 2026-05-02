@@ -188,34 +188,97 @@ def rotation_matrix_2d(theta: float) -> np.ndarray:
 # Trajectory smoothing & physics-based filtering
 # ---------------------------------------------------------------------------
 
+def _extrapolate_from_history(hist: np.ndarray, T_fut: int = 20, dt: float = 0.25) -> np.ndarray:
+    """Extrapolate a constant-curvature trajectory from observed history.
+
+    Uses the last few history positions to estimate velocity and turning rate,
+    then extrapolates forward. This serves as a prior for mode selection —
+    during arcs, we prefer samples that continue the curve rather than
+    samples closest to the (potentially misleading) sample mean.
+
+    Parameters
+    ----------
+    hist : (T_hist, 4) array with [x, y, vx, vy] — ego-normalized, last pos at origin
+    T_fut : number of future steps to extrapolate
+    dt : timestep
+
+    Returns
+    -------
+    extrapolated : (T_fut, 2) future positions
+    """
+    # Use last velocity for speed/heading
+    vx, vy = hist[-1, 2], hist[-1, 3]
+    speed = math.sqrt(vx * vx + vy * vy)
+    if speed < 0.05:
+        # Essentially stationary — predict staying put
+        return np.zeros((T_fut, 2), dtype=np.float32)
+
+    heading = math.atan2(vy, vx)
+
+    # Estimate turning rate from last few velocity vectors
+    omega = 0.0
+    n_vel = 0
+    for i in range(max(0, len(hist) - 6), len(hist) - 1):
+        v0x, v0y = hist[i, 2], hist[i, 3]
+        v1x, v1y = hist[i + 1, 2], hist[i + 1, 3]
+        s0 = math.sqrt(v0x * v0x + v0y * v0y)
+        s1 = math.sqrt(v1x * v1x + v1y * v1y)
+        if s0 > 0.05 and s1 > 0.05:
+            h0 = math.atan2(v0y, v0x)
+            h1 = math.atan2(v1y, v1x)
+            dh = h1 - h0
+            # Wrap to [-pi, pi]
+            dh = (dh + math.pi) % (2 * math.pi) - math.pi
+            omega += dh / dt
+            n_vel += 1
+
+    if n_vel > 0:
+        omega /= n_vel
+
+    # Clamp turning rate to plausible range (max ~90 deg/s)
+    omega = max(-1.57, min(1.57, omega))
+
+    # Extrapolate with constant speed + constant turning rate
+    extrap = np.zeros((T_fut, 2), dtype=np.float32)
+    x, y = 0.0, 0.0
+    h = heading
+    for t in range(T_fut):
+        h += omega * dt
+        x += speed * math.cos(h) * dt
+        y += speed * math.sin(h) * dt
+        extrap[t, 0] = x
+        extrap[t, 1] = y
+
+    return extrap
+
+
 def filter_and_smooth_trajectories(
     preds: np.ndarray,
     dt: float = 0.25,
     max_speed: float = 3.5,
     max_accel: float = 4.0,
     s_factor: float = 50.0,
+    hist: np.ndarray = None,
 ) -> np.ndarray:
-    """Physics-based outlier rejection + spline smoothing for diffusion samples.
+    """Physics-based outlier rejection + curvature-aware filtering + spline smoothing.
 
     Pipeline:
-    1. Per-sample physics check — reject trajectories with implausible
-       speed (> max_speed m/s at any step) or acceleration (> max_accel m/s²).
-    2. MAD-based statistical outlier rejection on the surviving samples.
-    3. Replace rejected samples with median trajectory + small noise.
+    1. Per-sample physics check — reject implausible speed/acceleration.
+    2. If history is provided, compute a curvature-extrapolated reference
+       trajectory and use it (blended with sample median) as the center
+       for statistical outlier rejection. This prevents the arc problem
+       where the sample mean drifts away from the true motion direction.
+    3. Replace rejected samples with valid donors + noise.
     4. Spline-smooth each trajectory.
 
     Parameters
     ----------
     preds : (K, T, 2) or (K, M, T, 2) numpy array
-        Raw diffusion output (ego-normalized coordinates).
     dt : float
-        Timestep between prediction points (default 0.25s = 4 Hz).
-    max_speed : float
-        Maximum plausible pedestrian speed in m/s. 3.5 m/s ≈ fast jog.
-    max_accel : float
-        Maximum plausible pedestrian acceleration in m/s².
-    s_factor : float
-        Spline smoothing factor (higher = smoother).
+    max_speed, max_accel : physics bounds
+    s_factor : spline smoothing factor
+    hist : optional (T_hist, 4) history for curvature-aware mode selection.
+           Only used for single-agent (K, T, 2) predictions.
 
     Returns
     -------
@@ -224,52 +287,55 @@ def filter_and_smooth_trajectories(
     original_shape = preds.shape
     K = preds.shape[0]
     T = preds.shape[-2]
-    rest_shape = preds.shape[1:]  # (T, 2) or (M, T, 2)
+    rest_shape = preds.shape[1:]
 
-    # Flatten each sample to work on individual trajectories
-    # For (K, M, T, 2), we check physics per-agent then combine
+    # --- Step 1: Physics rejection ---
     if preds.ndim == 4:
-        # Multi-agent: (K, M, T, 2)
         M = preds.shape[1]
         physics_valid = np.ones(K, dtype=bool)
         for m in range(M):
             agent_valid = _check_physics(preds[:, m, :, :], dt, max_speed, max_accel)
             physics_valid &= agent_valid
     else:
-        # Single-agent: (K, T, 2)
         physics_valid = _check_physics(preds, dt, max_speed, max_accel)
 
-    # --- Step 2: MAD-based statistical rejection on physics-valid samples ---
+    # --- Step 2: Curvature-aware + MAD rejection ---
     flat_per_sample = preds.reshape(K, -1)
 
-    # Compute median only from physics-valid samples if enough exist
     valid_indices = np.where(physics_valid)[0]
     if len(valid_indices) >= 3:
         median_sample = np.median(flat_per_sample[valid_indices], axis=0)
     else:
         median_sample = np.median(flat_per_sample, axis=0)
 
-    dists = np.linalg.norm(flat_per_sample - median_sample[None], axis=-1)
+    # Blend median with curvature extrapolation for better arc handling
+    if hist is not None and preds.ndim == 3:
+        extrap = _extrapolate_from_history(hist, T_fut=T, dt=dt)  # (T, 2)
+        extrap_flat = extrap.reshape(-1).astype(np.float32)
+        # Blend: 60% curvature extrapolation, 40% sample median
+        # This anchors the reference to the expected motion direction
+        center = 0.6 * extrap_flat + 0.4 * median_sample
+    else:
+        center = median_sample
+
+    dists = np.linalg.norm(flat_per_sample - center[None], axis=-1)
     med_dist = np.median(dists[valid_indices]) if len(valid_indices) >= 3 else np.median(dists)
     mad = np.median(np.abs(dists - med_dist))
     threshold = med_dist + 2.5 * max(mad, 0.1)
     stat_valid = dists < threshold
 
-    # Combined mask: must pass both physics and stats
     valid = physics_valid & stat_valid
 
     # --- Step 3: Replace invalid samples ---
-    median_traj = median_sample.reshape(rest_shape)
+    center_traj = center.reshape(rest_shape)
     preds_clean = preds.copy()
     n_valid = valid.sum()
 
     if n_valid == 0:
-        # All samples failed — just use median everywhere with noise
         for k in range(K):
             noise = np.random.randn(*rest_shape).astype(np.float32) * 0.02
-            preds_clean[k] = median_traj + noise
+            preds_clean[k] = center_traj + noise
     else:
-        # Replace invalid samples with random valid sample + small noise
         valid_idx = np.where(valid)[0]
         for k in range(K):
             if not valid[k]:

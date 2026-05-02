@@ -40,6 +40,11 @@ Thumbs.db
 # Sensor metadata
 *metadata.json
 
+# Diffusion training data and logs
+data/
+logs/
+*.ckpt
+
 # Claude Code
 .claude/
 CLAUDE.md

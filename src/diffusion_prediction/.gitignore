@@ -1,0 +1,10 @@
+# Per-epoch checkpoints (large, only need ema_best.pt)
+models/diffusion/*/ckpt_*.pt
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Logs
+logs/

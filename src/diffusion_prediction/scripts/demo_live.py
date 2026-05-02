@@ -97,7 +97,11 @@ JOINT_SCENARIOS = [
 def build_history(positions, dt=0.25):
     """Convert (T, 2) absolute positions to (T, 4) ego-normalized history.
 
-    Normalizes so the last position is at origin. Returns [x, y, vx, vy].
+    Normalizes so the last position is at origin. No heading rotation —
+    training data uses AV heading (arbitrary relative to pedestrian),
+    so the model is orientation-agnostic.
+
+    Returns [x, y, vx, vy] history and origin for inverse transform.
     """
     pos = positions.copy()
     origin = pos[-1].copy()
@@ -127,13 +131,13 @@ def parse_args():
     p.add_argument("--fps", type=int, default=4, help="Animation FPS (matches 4 Hz sensor)")
     p.add_argument("--seed", type=int, default=42)
     # Architecture
-    p.add_argument("--d-model", type=int, default=128)
-    p.add_argument("--nhead", type=int, default=4)
-    p.add_argument("--num-layers", type=int, default=4)
-    p.add_argument("--dim-ff", type=int, default=256)
+    p.add_argument("--d-model", type=int, default=256)
+    p.add_argument("--nhead", type=int, default=8)
+    p.add_argument("--num-enc-layers", type=int, default=6)
+    p.add_argument("--num-dec-layers", type=int, default=4)
+    p.add_argument("--dim-ff", type=int, default=512)
     p.add_argument("--max-agents", type=int, default=16)
-    p.add_argument("--num-enc-layers", type=int, default=4)
-    p.add_argument("--num-interaction-layers", type=int, default=2)
+    p.add_argument("--num-interaction-layers", type=int, default=3)
     return p.parse_args()
 
 
@@ -141,12 +145,15 @@ def load_model(args, device):
     if args.model == "single":
         model = TrajectoryDenoiser(
             d=args.d_model, nhead=args.nhead,
-            num_layers=args.num_layers, dim_ff=args.dim_ff,
+            num_enc_layers=args.num_enc_layers,
+            num_dec_layers=args.num_dec_layers,
+            dim_ff=args.dim_ff,
         ).to(device)
     else:
         model = JointTrajectoryDenoiser(
             d=args.d_model, max_agents=args.max_agents,
             nhead=args.nhead, num_enc_layers=args.num_enc_layers,
+            num_dec_layers=args.num_dec_layers,
             num_interaction_layers=args.num_interaction_layers,
             dim_ff=args.dim_ff,
         ).to(device)
@@ -225,9 +232,9 @@ def predict_joint(model, schedule, histories_np, masks_np, max_agents, device, K
     return futures[0, :, :M_real].cpu().numpy()  # (K, M_real, 20, 2)
 
 
-def smooth_predictions(preds, s_factor=50.0):
+def smooth_predictions(preds, s_factor=50.0, hist=None):
     """Physics-based filtering + spline smoothing. Delegates to shared utility."""
-    return filter_and_smooth_trajectories(preds, s_factor=s_factor)
+    return filter_and_smooth_trajectories(preds, s_factor=s_factor, hist=hist)
 
 
 def main():
@@ -279,10 +286,9 @@ def main():
                 mask_np = np.ones(len(hist_np), dtype=np.float32)
 
                 # Ground truth future (if available)
-                gt_future = None
+                gt_future_abs = None
                 if step + 20 <= total_steps:
-                    gt_abs = all_pos[step + 1:step + 21]  # next 20 steps
-                    gt_future = gt_abs - origin  # ego-normalize
+                    gt_future_abs = all_pos[step + 1:step + 21].copy()
 
                 all_frames.append({
                     "scenario_idx": sc_idx,
@@ -292,8 +298,7 @@ def main():
                     "hist_ego": hist_np,
                     "mask": mask_np,
                     "origin": origin,
-                    "gt_future_abs": (gt_abs.copy() if gt_future is not None else None),
-                    "gt_future_ego": gt_future,
+                    "gt_future_abs": gt_future_abs,
                 })
         else:
             num_agents = len(sc["gens"])
@@ -346,7 +351,7 @@ def main():
         if args.model == "single":
             preds = predict_single(model, schedule, frame["hist_ego"],
                                    device, K=args.K)  # (K, 20, 2)
-            preds = smooth_predictions(preds)
+            preds = smooth_predictions(preds, hist=frame["hist_ego"])
             # Convert to absolute coordinates
             preds_abs = preds + frame["origin"]
 
