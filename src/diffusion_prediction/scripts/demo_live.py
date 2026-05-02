@@ -73,6 +73,44 @@ def _trajectory_parallel_c(t):
     return np.stack([1.0 * t, np.full_like(t, 1.5)], axis=-1)
 
 
+# ---- Curved trajectories for joint demo ----
+
+def _trajectory_curve_left_tight(t):
+    """Tight left turn, R=4m."""
+    R, omega = 4.0, 0.35
+    theta = omega * t
+    return np.stack([R * np.sin(theta), R * (1 - np.cos(theta))], axis=-1)
+
+def _trajectory_curve_right_wide(t):
+    """Wide right turn, R=8m, offset start."""
+    R, omega = 8.0, 0.18
+    theta = omega * t
+    return np.stack([R * np.sin(theta) + 3.0, -(R * (1 - np.cos(theta))) + 2.0], axis=-1)
+
+def _trajectory_curve_left_slow(t):
+    """Slow left arc, R=10m."""
+    R, omega = 10.0, 0.12
+    theta = omega * t
+    return np.stack([R * np.sin(theta) - 2.0, R * (1 - np.cos(theta)) - 3.0], axis=-1)
+
+def _trajectory_curve_s_bend(t):
+    """S-bend: left then right."""
+    speed = 1.2
+    omega = 0.3
+    # First half: turn left; second half: turn right
+    mid = t[-1] / 2
+    theta = np.where(t < mid, omega * t, omega * mid - omega * (t - mid))
+    x = np.cumsum(speed * np.cos(theta)) * 0.25
+    y = np.cumsum(speed * np.sin(theta)) * 0.25
+    return np.stack([x + 1.0, y - 1.0], axis=-1)
+
+def _trajectory_curve_uturn(t):
+    """U-turn, tight R=3m."""
+    R, omega = 3.0, 0.45
+    theta = omega * t
+    return np.stack([R * np.sin(theta) - 4.0, R * (1 - np.cos(theta)) + 1.0], axis=-1)
+
+
 SINGLE_SCENARIOS = [
     {"name": "Pedestrian walking straight",  "gen": _trajectory_straight,    "total_s": 15.0},
     {"name": "Pedestrian turning left",      "gen": _trajectory_curve,       "total_s": 15.0},
@@ -90,6 +128,17 @@ JOINT_SCENARIOS = [
         "name": "Three pedestrians walking in parallel",
         "gens": [_trajectory_parallel_a, _trajectory_parallel_b, _trajectory_parallel_c],
         "total_s": 14.0,
+    },
+    {
+        "name": "Five pedestrians all curving",
+        "gens": [
+            _trajectory_curve_left_tight,
+            _trajectory_curve_right_wide,
+            _trajectory_curve_left_slow,
+            _trajectory_curve_s_bend,
+            _trajectory_curve_uturn,
+        ],
+        "total_s": 16.0,
     },
 ]
 
