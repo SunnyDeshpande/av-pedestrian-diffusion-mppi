@@ -1,0 +1,78 @@
+# gem_perception — real GEM e4 (ROS2 humble) overrides.
+#
+# Fill in the few [TBD] values from docs/real_car_checklist.md output, then:
+#   ros2 launch gem_perception_ros2 perception_real_e4.launch.py default_prompt:="red sign"
+
+gem_perception_yolo:
+  ros__parameters:
+    # ─── topics ───
+    # Choose ONE front camera. Defaults assume OAK-D matches the sim topic name.
+    image_topic:        /oak/rgb/image_raw          # alt: /lucid/camera_fl/image_raw
+    camera_info_topic:  /oak/rgb/camera_info        # alt: /lucid/camera_fl/camera_info
+    lidar_topic:        /ouster/points
+    prompt_topic:       /perception/prompt
+
+    # ─── frames ───
+    # If `tf2_echo base_link <camera_frame>` succeeds with the optical
+    # convention (Z-forward), keep that name here. Otherwise add a static TF
+    # in the launch (see perception_real_e4.launch.py) that broadcasts an
+    # `<camera>_optical_link` and use that name here.
+    camera_frame:       front_single_camera_optical_link  # [TBD] verify on the car
+    lidar_frame:        os_lidar
+    base_frame:         base_link
+    map_frame:          map
+
+    # ─── filters ───
+    z_min_base: 0.15
+    z_max_base: 5.0
+    dbscan_eps: 0.4
+    dbscan_min_samples: 3
+    min_cluster_points: 3
+    estimated_goal_distance: 15.0
+    goal_hold_seconds: 2.0
+    device: cuda
+
+    # ─── model weight (optional) ───
+    # Leave empty to use $GEM_PERCEPTION_MODELS or ~/gem_perception_models/yolov8s-worldv2.pt.
+    yolo_weight: ""
+    models_root: ""   # honored by SAM detector; set to override the YOLO default too
+    conf: 0.05
+
+gem_perception_sam:
+  ros__parameters:
+    image_topic:        /oak/rgb/image_raw
+    camera_info_topic:  /oak/rgb/camera_info
+    lidar_topic:        /ouster/points
+    prompt_topic:       /perception/prompt
+    camera_frame:       front_single_camera_optical_link
+    lidar_frame:        os_lidar
+    base_frame:         base_link
+    map_frame:          map
+    z_min_base: 0.15
+    z_max_base: 5.0
+    dbscan_eps: 0.4
+    dbscan_min_samples: 3
+    min_cluster_points: 3
+    estimated_goal_distance: 15.0
+    goal_hold_seconds: 2.0
+    device: cuda
+    sam_type: sam2.1_hiera_small
+    models_root: ""
+
+map_tf_broadcaster:
+  ros__parameters:
+    # Replace with the GPS anchor near where you operate. Pick any fixed
+    # lat/lon in the test area; the map origin == this point.
+    ref_lat: 40.092722        # [TBD] highbay default; update to your test site if needed
+    ref_lon: -88.236365
+    map_frame: map
+    base_frame: base_link
+    # Septentrio default topic names on the real e4:
+    ins_topic: /septentrio_gnss/insnavgeod
+    gps_topic: /septentrio_gnss/navsatfix
+    imu_topic: /septentrio_gnss/imu
+
+bev_overlay_node:
+  ros__parameters:
+    ref_lat: 40.092722
+    ref_lon: -88.236365

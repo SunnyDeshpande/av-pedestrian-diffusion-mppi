@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ROS / colcon / catkin (if anyone ever runs a build inside the repo)
+build/
+install/
+log/
+devel/
+
+# Model weights are stored outside the repo at ~/host/gem_perception_models/.
+# Re-download with scripts/download_models.py.
+models/
+*.pt
+*.pth
+*.onnx
