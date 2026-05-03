@@ -1,0 +1,405 @@
+Panels:
+  - Class: rviz/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 150
+  - Class: rviz/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Preferences:
+  PromptSaveOnExit: true
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: base_link
+      Value: true
+    - Class: rviz/TF
+      Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        GPS_link:
+          Value: true
+        IMU_link:
+          Value: true
+        base_footprint:
+          Value: true
+        base_link:
+          Value: true
+        front_camera_link:
+          Value: true
+        front_left_corner_camera_link:
+          Value: true
+        front_left_wheel_link:
+          Value: true
+        front_lidar_link:
+          Value: true
+        front_rack_link:
+          Value: true
+        front_radar_link:
+          Value: true
+        front_right_corner_camera_link:
+          Value: true
+        front_right_wheel_link:
+          Value: true
+        front_single_camera_link:
+          Value: true
+        front_single_camera_optical_link:
+          Value: true
+        front_sonar_link:
+          Value: true
+        gps_antenna_aux_link:
+          Value: true
+        gps_antenna_main_link:
+          Value: true
+        headlight_fl_link:
+          Value: true
+        headlight_fr_link:
+          Value: true
+        i_logo_fl_link:
+          Value: true
+        i_logo_fr_link:
+          Value: true
+        i_logo_rl_link:
+          Value: true
+        i_logo_rr_link:
+          Value: true
+        imu_link:
+          Value: true
+        left_steering_hinge_link:
+          Value: true
+        lightbar_link:
+          Value: true
+        map:
+          Value: true
+        ouster:
+          Value: true
+        ouster_base_link:
+          Value: true
+        rear_left_corner_camera_link:
+          Value: true
+        rear_left_stop_light_link:
+          Value: true
+        rear_left_wheel_link:
+          Value: true
+        rear_rack_link:
+          Value: true
+        rear_right_corner_camera_link:
+          Value: true
+        rear_right_stop_light_link:
+          Value: true
+        rear_right_wheel_link:
+          Value: true
+        rear_sonar_link:
+          Value: true
+        right_steering_hinge_link:
+          Value: true
+        taillight_rl_link:
+          Value: true
+        taillight_rr_link:
+          Value: true
+        top_lidar_link:
+          Value: true
+        top_rack_link:
+          Value: true
+        turnlight_fl_link:
+          Value: true
+        turnlight_fr_link:
+          Value: true
+      Marker Alpha: 1
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        base_footprint:
+          {}
+        map:
+          base_link:
+            GPS_link:
+              {}
+            IMU_link:
+              {}
+            front_camera_link:
+              front_single_camera_link:
+                front_single_camera_optical_link:
+                  {}
+            front_left_corner_camera_link:
+              {}
+            front_lidar_link:
+              {}
+            front_rack_link:
+              front_sonar_link:
+                {}
+            front_radar_link:
+              {}
+            front_right_corner_camera_link:
+              {}
+            gps_antenna_aux_link:
+              {}
+            gps_antenna_main_link:
+              {}
+            headlight_fl_link:
+              {}
+            headlight_fr_link:
+              {}
+            i_logo_fl_link:
+              {}
+            i_logo_fr_link:
+              {}
+            i_logo_rl_link:
+              {}
+            i_logo_rr_link:
+              {}
+            imu_link:
+              {}
+            left_steering_hinge_link:
+              front_left_wheel_link:
+                {}
+            lightbar_link:
+              {}
+            rear_left_corner_camera_link:
+              {}
+            rear_left_stop_light_link:
+              {}
+            rear_left_wheel_link:
+              {}
+            rear_rack_link:
+              rear_sonar_link:
+                {}
+            rear_right_corner_camera_link:
+              {}
+            rear_right_stop_light_link:
+              {}
+            rear_right_wheel_link:
+              {}
+            right_steering_hinge_link:
+              front_right_wheel_link:
+                {}
+            taillight_rl_link:
+              {}
+            taillight_rr_link:
+              {}
+            top_lidar_link:
+              {}
+            top_rack_link:
+              ouster_base_link:
+                ouster:
+                  {}
+            turnlight_fl_link:
+              {}
+            turnlight_fr_link:
+              {}
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: OusterPoints
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.009999999776482582
+      Style: Flat Squares
+      Topic: /ouster/points
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 0; 255; 0
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: ObjectCluster
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 6
+      Size (m): 0.009999999776482582
+      Style: Flat Squares
+      Topic: /perception/object_cluster
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /perception/object_bbox_3d
+      Name: ObjectBBox3D
+      Namespaces:
+        goal: true
+        object_bbox_3d: true
+      Queue Size: 100
+      Value: true
+    - Alpha: 1
+      Axes Length: 1
+      Axes Radius: 0.10000000149011612
+      Class: rviz/Pose
+      Color: 0; 255; 0
+      Enabled: true
+      Head Length: 0.5
+      Head Radius: 0.10000000149011612
+      Name: GoalPose (map)
+      Queue Size: 10
+      Shaft Length: 2
+      Shaft Radius: 0.05000000074505806
+      Shape: Arrow
+      Topic: /perception/goal_pose
+      Unreliable: false
+      Value: true
+    - Alpha: 1
+      Axes Length: 1
+      Axes Radius: 0.10000000149011612
+      Class: rviz/Pose
+      Color: 0; 200; 255
+      Enabled: true
+      Head Length: 0.30000001192092896
+      Head Radius: 0.10000000149011612
+      Name: GoalPose (base_link)
+      Queue Size: 10
+      Shaft Length: 1
+      Shaft Radius: 0.05000000074505806
+      Shape: Arrow
+      Topic: /perception/goal_pose_base_link
+      Unreliable: false
+      Value: true
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /perception/image_annotated
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: ImageAnnotated
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /perception/lidar_projected_image
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: LiDARProjected
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /motion_image_with_goal
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: BEVGoal
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Default Light: true
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 22.38722038269043
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Field of View: 0.7853981852531433
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.40999990701675415
+      Target Frame: base_link
+      Yaw: 6.205001354217529
+    Saved: ~
+Window Geometry:
+  BEVGoal:
+    collapsed: false
+  Displays:
+    collapsed: false
+  Height: 730
+  Hide Left Dock: false
+  Hide Right Dock: false
+  ImageAnnotated:
+    collapsed: false
+  LiDARProjected:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd00000001000000000000020000000284fc0200000004fb0000001c0049006d0061006700650041006e006e006f00740061007400650064010000003b000000bf0000001600fffffffb0000001c004c006900440041005200500072006f006a006500630074006500640100000100000001100000001600fffffffb0000000e0042004500560047006f0061006c0100000216000000a90000001600fffffffc000001d1000000ee0000000000fffffffaffffffff0100000002fb000000100044006900730070006c00610079007302000000a50000032a0000035f000000d3fb0000000a0056006900650077007302000000ad0000032c0000035f000000ee000002c60000028400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Width: 1228
+  X: 191
+  Y: 28
