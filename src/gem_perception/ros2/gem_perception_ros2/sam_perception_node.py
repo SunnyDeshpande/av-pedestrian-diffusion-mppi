@@ -19,6 +19,7 @@ from tf2_ros import Buffer, TransformListener
 from .geometry import project_to_image, transform_points
 from .pipeline import PipelineParams, run_pipeline
 from .ros_common import (
+    D_from_camera_info,
     GoalHold,
     K_from_camera_info,
     draw_detection_overlay,
@@ -43,6 +44,7 @@ class SamPerceptionNode(Node):
         self.declare_parameter("device", "cuda")
         self.declare_parameter("sam_type", "sam2.1_hiera_small")
         self.declare_parameter("default_prompt", "")
+        self.declare_parameter("models_root", "")
         self.declare_parameter("z_min_base", 0.15)
         self.declare_parameter("z_max_base", 5.0)
         self.declare_parameter("dbscan_eps", 0.4)
@@ -70,7 +72,10 @@ class SamPerceptionNode(Node):
             estimated_goal_distance=p("estimated_goal_distance").value,
         )
 
-        self.detector = LangSamDetector(device=p("device").value, sam_type=p("sam_type").value)
+        models_root = p("models_root").value or None
+        self.detector = LangSamDetector(device=p("device").value,
+                                        sam_type=p("sam_type").value,
+                                        models_root=models_root)
         dp = p("default_prompt").value
         if dp:
             self.detector.set_prompt(dp)
@@ -130,6 +135,7 @@ class SamPerceptionNode(Node):
             det = self.detector.infer(image_bgr)
 
         K = K_from_camera_info(info_msg.k)
+        D = D_from_camera_info(info_msg.d)
         try:
             T_cam_lidar = self._lookup_matrix(self.camera_frame, self.lidar_frame, img_msg.header.stamp)
             T_base_lidar = self._lookup_matrix(self.base_frame, self.lidar_frame, img_msg.header.stamp)
@@ -145,7 +151,7 @@ class SamPerceptionNode(Node):
             points_lidar = np.empty((0, 3), dtype=np.float64)
 
         pts_cam_all = transform_points(points_lidar, T_cam_lidar)
-        uv, idx = project_to_image(pts_cam_all, K)
+        uv, idx = project_to_image(pts_cam_all, K, D)
         depths = pts_cam_all[idx, 2] if idx.size else np.empty((0,))
         self.pub_proj.publish(self.bridge.cv2_to_imgmsg(
             draw_lidar_projection(image_bgr, uv, depths), "bgr8"))
@@ -156,7 +162,9 @@ class SamPerceptionNode(Node):
         result = None
 
         if det is not None:
-            result = run_pipeline(det, points_lidar, K, T_cam_lidar, T_base_lidar, T_base_cam, self.params)
+            result = run_pipeline(det, points_lidar, K,
+                                  T_cam_lidar, T_base_lidar, T_base_cam,
+                                  self.params, D=D)
             goal_base = result.goal_base
             is_estimated = result.is_estimated
             ann = draw_detection_overlay(image_bgr, det.bbox_xyxy, det.mask, result.pixel_centroid,

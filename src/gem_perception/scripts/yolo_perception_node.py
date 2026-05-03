@@ -21,6 +21,7 @@ from gem_perception.geometry import (
 )
 from gem_perception.pipeline import PipelineParams, run_pipeline
 from gem_perception.ros_common import (
+    D_from_camera_info,
     GoalHold,
     K_from_camera_info,
     draw_detection_overlay,
@@ -116,6 +117,7 @@ class YoloPerceptionNode:
             det = self.detector.infer(image_bgr)
 
         K = K_from_camera_info(info_msg.K)
+        D = D_from_camera_info(info_msg.D)
 
         try:
             T_cam_lidar = self._lookup_matrix(self.camera_frame, self.lidar_frame, img_msg.header.stamp)
@@ -131,7 +133,7 @@ class YoloPerceptionNode:
 
         # LiDAR projection overlay (always published for calibration check)
         pts_cam_all = transform_points(points_lidar, T_cam_lidar)
-        uv, idx = project_to_image(pts_cam_all, K)
+        uv, idx = project_to_image(pts_cam_all, K, D)
         depths = pts_cam_all[idx, 2] if idx.size else np.empty((0,))
         proj_img = draw_lidar_projection(image_bgr, uv, depths)
         self.pub_proj.publish(self.bridge.cv2_to_imgmsg(proj_img, "bgr8"))
@@ -143,7 +145,8 @@ class YoloPerceptionNode:
 
         if det is not None:
             result = run_pipeline(
-                det, points_lidar, K, T_cam_lidar, T_base_lidar, T_base_cam, self.params
+                det, points_lidar, K, T_cam_lidar, T_base_lidar, T_base_cam,
+                self.params, D=D,
             )
             goal_base = result.goal_base
             is_estimated = result.is_estimated

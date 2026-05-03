@@ -20,6 +20,7 @@ from rclpy.duration import Duration
 from .geometry import project_to_image, transform_points
 from .pipeline import PipelineParams, run_pipeline
 from .ros_common import (
+    D_from_camera_info,
     GoalHold,
     K_from_camera_info,
     draw_detection_overlay,
@@ -41,8 +42,9 @@ class YoloPerceptionNode(Node):
         self.declare_parameter("lidar_frame", "ouster")
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("map_frame", "map")
-        self.declare_parameter("yolo_weight",
-                               os.path.expanduser("~/gem_perception_models/yolov8s-worldv2.pt"))
+        # Default to "auto" which expands to <models_root>/yolov8s-worldv2.pt; the
+        # detector picks models_root from env GEM_PERCEPTION_MODELS or platform defaults.
+        self.declare_parameter("yolo_weight", "")
         self.declare_parameter("device", "cuda")
         self.declare_parameter("conf", 0.05)
         self.declare_parameter("default_prompt", "")
@@ -73,7 +75,11 @@ class YoloPerceptionNode(Node):
             estimated_goal_distance=p("estimated_goal_distance").value,
         )
 
-        self.detector = YoloWorldDetector(p("yolo_weight").value,
+        from .sam_detector import _default_models_root
+        weight = p("yolo_weight").value
+        if not weight:
+            weight = os.path.join(_default_models_root(), "yolov8s-worldv2.pt")
+        self.detector = YoloWorldDetector(weight,
                                           device=p("device").value,
                                           conf=p("conf").value)
         dp = p("default_prompt").value
@@ -135,6 +141,7 @@ class YoloPerceptionNode(Node):
             det = self.detector.infer(image_bgr)
 
         K = K_from_camera_info(info_msg.k)
+        D = D_from_camera_info(info_msg.d)
 
         try:
             T_cam_lidar = self._lookup_matrix(self.camera_frame, self.lidar_frame, img_msg.header.stamp)
@@ -151,7 +158,7 @@ class YoloPerceptionNode(Node):
             points_lidar = np.empty((0, 3), dtype=np.float64)
 
         pts_cam_all = transform_points(points_lidar, T_cam_lidar)
-        uv, idx = project_to_image(pts_cam_all, K)
+        uv, idx = project_to_image(pts_cam_all, K, D)
         depths = pts_cam_all[idx, 2] if idx.size else np.empty((0,))
         self.pub_proj.publish(self.bridge.cv2_to_imgmsg(
             draw_lidar_projection(image_bgr, uv, depths), "bgr8"))
@@ -162,7 +169,9 @@ class YoloPerceptionNode(Node):
         result = None
 
         if det is not None:
-            result = run_pipeline(det, points_lidar, K, T_cam_lidar, T_base_lidar, T_base_cam, self.params)
+            result = run_pipeline(det, points_lidar, K,
+                                  T_cam_lidar, T_base_lidar, T_base_cam,
+                                  self.params, D=D)
             goal_base = result.goal_base
             is_estimated = result.is_estimated
             ann = draw_detection_overlay(image_bgr, det.bbox_xyxy, det.mask, result.pixel_centroid,

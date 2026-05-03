@@ -15,14 +15,32 @@ def transform_points(points: np.ndarray, T: np.ndarray) -> np.ndarray:
     return (T @ homog.T).T[:, :3]
 
 
-def project_to_image(points_cam: np.ndarray, K: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def project_to_image(points_cam: np.ndarray, K: np.ndarray,
+                     D: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
     """Project (N,3) camera-frame points to (u,v) + keep mask (Z>0 only).
 
-    Returns uv (M,2) float array and the index array into the original points.
+    If ``D`` is given (length 4 or 5, plumb_bob: ``[k1,k2,p1,p2[,k3]]`` and
+    has any non-zero element, points are projected through OpenCV's
+    ``cv2.projectPoints`` so radial/tangential distortion is applied. If
+    ``D`` is None or all-zero the cheap pinhole path is used.
+
+    Returns ``uv (M,2)`` float array and the index array into the original points.
     """
     z = points_cam[:, 2]
     valid = z > 0.05
     p = points_cam[valid]
+    if p.shape[0] == 0:
+        return np.empty((0, 2), dtype=float), np.where(valid)[0]
+    if D is not None and np.any(np.abs(D) > 1e-6):
+        import cv2
+        # cv2.projectPoints expects (N,1,3) object points + zero rvec/tvec
+        pts = p.reshape(-1, 1, 3).astype(np.float64)
+        rvec = np.zeros(3, dtype=np.float64)
+        tvec = np.zeros(3, dtype=np.float64)
+        uv, _ = cv2.projectPoints(pts, rvec, tvec,
+                                  K.astype(np.float64),
+                                  np.asarray(D, dtype=np.float64).reshape(-1))
+        return uv.reshape(-1, 2), np.where(valid)[0]
     uv = (K @ p.T).T
     uv = uv[:, :2] / uv[:, 2:3]
     return uv, np.where(valid)[0]
@@ -100,8 +118,13 @@ def choose_cluster(
     clusters_cam: list[np.ndarray],
     pixel_centroid: Tuple[float, float],
     K: np.ndarray,
+    D: Optional[np.ndarray] = None,
 ) -> int:
-    """Index of the cluster whose 3D centroid projects closest to the 2D target pixel."""
+    """Index of the cluster whose 3D centroid projects closest to the 2D target pixel.
+
+    When ``D`` is given and non-zero the centroids are projected through the
+    distortion model so the comparison stays in image-pixel space.
+    """
     best_i, best_d = -1, float("inf")
     for i, c in enumerate(clusters_cam):
         if c.size == 0:
@@ -109,17 +132,31 @@ def choose_cluster(
         cent = c.mean(axis=0)
         if cent[2] <= 0:
             continue
-        uv = K @ cent
-        uv = uv[:2] / uv[2]
-        d = float(np.hypot(uv[0] - pixel_centroid[0], uv[1] - pixel_centroid[1]))
+        uv2, _ = project_to_image(cent.reshape(1, 3), K, D)
+        if uv2.shape[0] == 0:
+            continue
+        d = float(np.hypot(uv2[0, 0] - pixel_centroid[0], uv2[0, 1] - pixel_centroid[1]))
         if d < best_d:
             best_d, best_i = d, i
     return best_i
 
 
-def pixel_to_ray(pixel: Tuple[float, float], K: np.ndarray) -> np.ndarray:
-    """Unit ray in camera optical frame (Z-forward) through the given pixel."""
+def pixel_to_ray(pixel: Tuple[float, float], K: np.ndarray,
+                 D: Optional[np.ndarray] = None) -> np.ndarray:
+    """Unit ray in camera optical frame (Z-forward) through the given pixel.
+
+    When ``D`` is given and non-zero, ``cv2.undistortPoints`` is used so the
+    pixel is first un-distorted before being lifted to a 3D ray.
+    """
     u, v = pixel
+    if D is not None and np.any(np.abs(D) > 1e-6):
+        import cv2
+        pts = np.array([[[u, v]]], dtype=np.float64)
+        und = cv2.undistortPoints(pts, K.astype(np.float64),
+                                  np.asarray(D, dtype=np.float64).reshape(-1))
+        x, y = und[0, 0]
+        r = np.array([x, y, 1.0], dtype=float)
+        return r / np.linalg.norm(r)
     fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
     r = np.array([(u - cx) / fx, (v - cy) / fy, 1.0], dtype=float)
     return r / np.linalg.norm(r)

@@ -1,6 +1,6 @@
-import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -41,6 +41,6 @@ def generate_launch_description():
             name="rviz_perception",
             output="screen",
             arguments=["-d", rviz],
-            condition=None,  # always on; remove if you wire run_rviz
+            condition=IfCondition(LaunchConfiguration("run_rviz")),
         ),
     ])

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Download model weights into a persistent host-mounted dir.
+"""Download model weights into a persistent dir.
 
-Inside docker, ~/host resolves to the host's /home/acrl (bind mount). Weights
-go to ~/host/gem_perception_models/ so container restarts don't re-download.
+Resolution order (matches sam_detector._default_models_root):
+  1. $GEM_PERCEPTION_MODELS env var (explicit override).
+  2. ~/host/gem_perception_models (docker on host with /home/acrl bind-mounted).
+  3. ~/gem_perception_models (real-car / non-docker).
 
 Covers:
  - YOLO-World (small) — always
@@ -15,7 +17,17 @@ import sys
 import urllib.request
 
 
-ROOT = pathlib.Path(os.path.expanduser("~/host/gem_perception_models"))
+def _default_root() -> pathlib.Path:
+    env = os.environ.get("GEM_PERCEPTION_MODELS")
+    if env:
+        return pathlib.Path(os.path.expanduser(env))
+    docker_path = pathlib.Path(os.path.expanduser("~/host/gem_perception_models"))
+    if docker_path.is_dir():
+        return docker_path
+    return pathlib.Path(os.path.expanduser("~/gem_perception_models"))
+
+
+ROOT = _default_root()
 
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s-worldv2.pt"
 YOLO_DST = ROOT / "yolov8s-worldv2.pt"
@@ -39,6 +51,7 @@ def _dl(url, dst):
 
 
 def main():
+    print(f"[root] {ROOT}")
     ROOT.mkdir(parents=True, exist_ok=True)
     _dl(YOLO_URL, YOLO_DST)
 

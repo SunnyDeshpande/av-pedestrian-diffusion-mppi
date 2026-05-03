@@ -1,6 +1,6 @@
-import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -13,6 +13,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("default_prompt", default_value=""),
+        DeclareLaunchArgument("run_rviz", default_value="true"),
         Node(
             package="gem_perception_ros2",
             executable="sam_perception_node",
@@ -40,5 +41,6 @@ def generate_launch_description():
             name="rviz_perception",
             output="screen",
             arguments=["-d", rviz],
+            condition=IfCondition(LaunchConfiguration("run_rviz")),
         ),
     ])

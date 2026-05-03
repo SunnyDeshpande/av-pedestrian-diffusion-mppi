@@ -16,6 +16,20 @@ def K_from_camera_info(K_list) -> np.ndarray:
     return np.asarray(K_list, dtype=float).reshape(3, 3)
 
 
+def D_from_camera_info(D_list) -> Optional[np.ndarray]:
+    """Convert CameraInfo.D to a 1-D numpy array, or ``None`` if not populated.
+
+    plumb_bob layout: ``[k1, k2, p1, p2, k3]`` (length 5). Returns ``None``
+    when D is empty or all-zero so callers can skip the distortion code path.
+    """
+    if D_list is None:
+        return None
+    arr = np.asarray(D_list, dtype=float).reshape(-1)
+    if arr.size == 0 or not np.any(np.abs(arr) > 1e-6):
+        return None
+    return arr
+
+
 def transform_to_matrix(translation: Tuple[float, float, float],
                         rotation_xyzw: Tuple[float, float, float, float]) -> np.ndarray:
     """(x,y,z) + (qx,qy,qz,qw) → 4x4 homogeneous transform."""

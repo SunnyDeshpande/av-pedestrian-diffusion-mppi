@@ -56,12 +56,13 @@ def _lidar_mask_to_base(
     T_cam_from_lidar: np.ndarray,
     T_base_from_lidar: np.ndarray,
     image_mask: np.ndarray,
+    D: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Return base_link-frame subset of points_lidar whose projection falls in image_mask."""
     if points_lidar.size == 0:
         return np.empty((0, 3), dtype=points_lidar.dtype)
     pts_cam = transform_points(points_lidar, T_cam_from_lidar)
-    uv, idx = project_to_image(pts_cam, K)
+    uv, idx = project_to_image(pts_cam, K, D)
     H, W = image_mask.shape
     u = np.round(uv[:, 0]).astype(int)
     v = np.round(uv[:, 1]).astype(int)
@@ -81,12 +82,13 @@ def run_pipeline(
     T_base_from_lidar: np.ndarray,
     T_base_from_cam: np.ndarray,
     params: PipelineParams,
+    D: Optional[np.ndarray] = None,
 ) -> PerceptionResult:
     pixel_centroid = bbox_center(detection.bbox_xyxy)
 
     # 1) Mask-clip + 2) z-axis ground filter + outlier filter, all in base_link
     pts_base_masked = _lidar_mask_to_base(
-        points_lidar, K, T_cam_from_lidar, T_base_from_lidar, detection.mask
+        points_lidar, K, T_cam_from_lidar, T_base_from_lidar, detection.mask, D
     )
     pts_base_filt = z_axis_filter(pts_base_masked, params.z_min_base, params.z_max_base)
     pts_base_filt = statistical_outlier_filter(
@@ -109,7 +111,7 @@ def run_pipeline(
                     continue
                 clusters_cam.append(transform_points(cb, T_cam_from_base))
                 clusters_base.append(cb)
-            idx_best = choose_cluster(clusters_cam, pixel_centroid, K)
+            idx_best = choose_cluster(clusters_cam, pixel_centroid, K, D)
             if idx_best >= 0:
                 cluster = ClusterResult.from_points(clusters_base[idx_best])
 
@@ -119,7 +121,7 @@ def run_pipeline(
         is_estimated = False
         cluster_cloud_base = cluster.points_base
     else:
-        ray_cam = pixel_to_ray(pixel_centroid, K)
+        ray_cam = pixel_to_ray(pixel_centroid, K, D)
         pt_cam = ray_cam * params.estimated_goal_distance
         goal_base = transform_points(pt_cam.reshape(1, 3), T_base_from_cam)[0]
         is_estimated = True

@@ -10,7 +10,21 @@ import numpy as np
 from .yolo_detector import Detection2D
 
 
-MODELS_ROOT = os.path.expanduser("~/host/gem_perception_models")
+def _default_models_root() -> str:
+    """Pick a sensible default for where weights live.
+
+    Order of preference:
+      1. ``$GEM_PERCEPTION_MODELS`` env var (explicit override).
+      2. ``~/host/gem_perception_models`` if it exists (docker-on-host pattern).
+      3. ``~/gem_perception_models`` (standard real-car / non-docker path).
+    """
+    env = os.environ.get("GEM_PERCEPTION_MODELS")
+    if env:
+        return os.path.expanduser(env)
+    docker_path = os.path.expanduser("~/host/gem_perception_models")
+    if os.path.isdir(docker_path):
+        return docker_path
+    return os.path.expanduser("~/gem_perception_models")
 
 
 class LangSamDetector:
@@ -23,14 +37,16 @@ class LangSamDetector:
     """
 
     def __init__(self, device: str = "cuda", sam_type: str = "sam2.1_hiera_small",
-                 box_threshold: float = 0.25, text_threshold: float = 0.20):
+                 box_threshold: float = 0.25, text_threshold: float = 0.20,
+                 models_root: Optional[str] = None):
         self.device = device
         self.box_threshold = box_threshold
         self.text_threshold = text_threshold
         self._prompt: Optional[str] = None
+        self.models_root = models_root or _default_models_root()
 
-        os.environ.setdefault("HF_HOME", os.path.join(MODELS_ROOT, "huggingface"))
-        os.environ.setdefault("TORCH_HOME", os.path.join(MODELS_ROOT, "torch"))
+        os.environ.setdefault("HF_HOME", os.path.join(self.models_root, "huggingface"))
+        os.environ.setdefault("TORCH_HOME", os.path.join(self.models_root, "torch"))
 
         if sys.version_info >= (3, 10):
             from lang_sam import LangSAM
@@ -47,12 +63,12 @@ class LangSamDetector:
             self._gd_predict = gd_predict
             self._box_ops = box_ops
 
-            gd_cfg = os.path.join(MODELS_ROOT, "GroundingDINO_SwinT_OGC.py")
-            gd_ckpt = os.path.join(MODELS_ROOT, "groundingdino_swint_ogc.pth")
-            sam_ckpt = os.path.join(MODELS_ROOT, "sam_vit_b_01ec64.pth")
+            gd_cfg = os.path.join(self.models_root, "GroundingDINO_SwinT_OGC.py")
+            gd_ckpt = os.path.join(self.models_root, "groundingdino_swint_ogc.pth")
+            sam_ckpt = os.path.join(self.models_root, "sam_vit_b_01ec64.pth")
             if not (os.path.exists(gd_cfg) and os.path.exists(gd_ckpt) and os.path.exists(sam_ckpt)):
                 raise FileNotFoundError(
-                    f"Missing model files in {MODELS_ROOT}. Run scripts/download_models.py first."
+                    f"Missing model files in {self.models_root}. Run scripts/download_models.py first."
                 )
             self._gd = load_model(gd_cfg, gd_ckpt, device=device)
             self._sam = sam_model_registry["vit_b"](checkpoint=sam_ckpt).to(device)
