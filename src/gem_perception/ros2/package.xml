@@ -2,7 +2,7 @@
 <package format="3">
   <name>gem_perception_ros2</name>
   <version>0.1.0</version>
-  <description>ROS2 (jazzy) text-promptable perception fusing camera + LiDAR → goal pose.</description>
+  <description>ROS2 (humble) text-promptable perception fusing camera + LiDAR → goal pose.</description>
   <maintainer email="ogawa3@illinois.edu">ACRL</maintainer>
   <license>MIT</license>
 

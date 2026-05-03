@@ -37,7 +37,7 @@ python3 path/to/gem_perception/ros2/gem_perception_ros2/download_models.py
 ## 2. Build the perception package
 
 ```bash
-cd ~/gem_ws/src         # whatever your jazzy/humble ws is called
+cd ~/gem_ws/src         # your humble workspace src dir
 ln -s /path/to/cs_588_g10/src/gem_perception/ros2 gem_perception_ros2
 # (or copy: cp -r /path/to/cs_588_g10/src/gem_perception/ros2 gem_perception_ros2)
 

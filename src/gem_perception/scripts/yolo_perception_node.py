@@ -45,10 +45,10 @@ class YoloPerceptionNode:
         self.base_frame = rospy.get_param("~base_frame", "base_link")
         self.map_frame = rospy.get_param("~map_frame", "map")
 
-        weight = rospy.get_param(
-            "~yolo_weight",
-            os.path.expanduser("~/host/gem_perception_models/yolov8s-worldv2.pt"),
-        )
+        from gem_perception.sam_detector import _default_models_root
+        weight = rospy.get_param("~yolo_weight", "")
+        if not weight:
+            weight = os.path.join(_default_models_root(), "yolov8s-worldv2.pt")
         device = rospy.get_param("~device", "cuda")
         conf = rospy.get_param("~conf", 0.05)
         default_prompt = rospy.get_param("~default_prompt", "")

@@ -1,4 +1,4 @@
-"""ROS2 (jazzy) wrapper: YOLO-World detection → LiDAR fusion → goal pose."""
+"""ROS2 (humble) wrapper: YOLO-World detection → LiDAR fusion → goal pose."""
 import os
 import threading
 

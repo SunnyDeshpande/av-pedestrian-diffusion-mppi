@@ -8,9 +8,10 @@ GEM platform; reusable on any rig with a calibrated camera + LiDAR + GNSS.
 The same pipeline ships in two flavors:
 
 - **ROS1 noetic**, for the Gazebo simulator (`./` — repo root).
-- **ROS2 jazzy**, for the real car (`./ros2/`).
+- **ROS2 humble**, for the real GEM e4 (`./ros2/`).
 
-The two share a single Python core; only the framework wrappers differ.
+The two share a single Python core (`geometry`, `pipeline`, detectors,
+`ros_common`); only the framework wrappers (rospy vs rclpy) differ.
 
 ---
 
@@ -69,12 +70,16 @@ gem_perception/                       ← repo root (= ROS1 catkin package)
 ├── launch/perception_sam.launch
 ├── config/perception.yaml            params for all nodes
 ├── rviz/perception.rviz              visualisation layout
-└── ros2/                             ROS2 ament_python package
+└── ros2/                             ROS2 ament_python package (humble)
     ├── CATKIN_IGNORE                 so catkin in a sim ws skips this folder
     ├── package.xml, setup.py
     ├── gem_perception_ros2/          rclpy node modules + duplicated core
-    ├── launch/perception_*.launch.py
-    ├── config/perception.yaml
+    ├── launch/
+    │   ├── perception_yolo.launch.py / perception_sam.launch.py     sim-style defaults
+    │   └── perception_real_e4.launch.py                             real-car preset (with optional optical-TF helper)
+    ├── config/
+    │   ├── perception.yaml            sim defaults
+    │   └── perception_real_e4.yaml    real-car overrides (frames, GPS, model paths)
     └── rviz/perception.rviz
 ```
 
@@ -146,14 +151,20 @@ LiDAR cloud ───┘   (slop ~0.2 s)
 All math is in `geometry.transform_points` + `project_to_image`:
 
 ```
-T_cam_lidar = TF.lookup("front_single_camera_optical_link", "ouster")
+T_cam_lidar = TF.lookup(<camera_optical_frame>, <lidar_frame>)
 P_cam       = T_cam_lidar · P_lidar           # (N,4) × (4,N) → (N,3)
-(u,v)       = K · P_cam / Z                   # only Z>0 retained
+(u,v)       = K · P_cam / Z                   # cheap pinhole when D is empty / zero
+            = cv2.projectPoints(P_cam, K, D)  # used automatically when CameraInfo.D
+                                              # has any non-zero element (real cameras)
 inside      = mask[v_round, u_round] == True
 P_keep      = P_lidar[inside]
 ```
 
-This is dense (vectorised numpy) and works on the full ouster cloud at 10 Hz.
+The same `D`-aware path is used in `pixel_to_ray` (estimated-goal direction)
+and `choose_cluster` (cluster-vs-mask scoring), so distortion handling is
+consistent end-to-end. Sim cameras (D = zeros) get the cheap pinhole path
+with zero overhead. This is dense (vectorised numpy) and works on the full
+ouster cloud at 10 Hz.
 
 ### 3.2 Why DBSCAN + closest-to-ray, not just closest-by-distance
 
@@ -205,7 +216,7 @@ device. Implemented at `yolo_detector.py:set_prompt`.
 A version-aware wrapper that picks one of two backends based on the
 runtime Python:
 
-- **Python ≥ 3.10** (real car / jazzy): `lang-sam` (Grounding-DINO + SAM 2).
+- **Python ≥ 3.10** (real car, humble): `lang-sam` (Grounding-DINO + SAM 2).
 - **Python < 3.10** (noetic docker, py 3.8): `groundingdino-py` +
   `segment-anything` (SAM 1, ViT-B). Same `set_prompt` / `infer` API.
 
@@ -317,9 +328,12 @@ Color convention: **green = measured**, **yellow = estimated**.
 
 ## 8. Models and persistence
 
-Weights are downloaded once into the host-mounted directory
-`~/host/gem_perception_models/` (`~/gem_perception_models/` on the host),
-so a docker container restart never re-downloads.
+Weight directory is resolved in this order (both for download and runtime):
+
+1. `$GEM_PERCEPTION_MODELS` — explicit override.
+2. `~/host/gem_perception_models/` — used when running inside the noetic
+   docker container, where `/home/acrl/host/...` is the host-mounted bind.
+3. `~/gem_perception_models/` — default for the real-car / non-docker path.
 
 ```bash
 python3 scripts/download_models.py            # ROS1
@@ -354,22 +368,34 @@ roslaunch gem_perception perception_yolo.launch default_prompt:="red sign"
 rostopic pub -1 /perception/prompt std_msgs/String "red cone"
 ```
 
-## 10. Real-car (jazzy) quickstart
+## 10. Real-car (humble) quickstart
+
+Full guide in [`real_car_deploy.md`](real_car_deploy.md); pre-flight
+information you need to gather first is in
+[`real_car_checklist.md`](real_car_checklist.md).
 
 ```bash
-cd ~/jazzy_ws/src
+# inside your humble workspace, e.g. ~/gem_ws
+cd ~/gem_ws/src
 git clone git@github.com:keeesuke/gem_perception.git
 ln -s gem_perception/ros2 gem_perception_ros2
-cd ~/jazzy_ws
-colcon build --symlink-install
+cd ~/gem_ws
+colcon build --symlink-install --packages-select gem_perception_ros2
 source install/setup.bash
 
-ros2 run gem_perception_ros2 download_models
-ros2 launch gem_perception_ros2 perception_yolo.launch.py default_prompt:="red sign"
+ros2 run gem_perception_ros2 download_models       # one-time, → ~/gem_perception_models/
+ros2 launch gem_perception_ros2 perception_real_e4.launch.py \
+  default_prompt:="red sign"
 ```
 
-You'll need your localization stack to publish `map → base_link`; the
-included `map_tf_broadcaster` is a fallback that uses GPS + IMU yaw.
+The included `map_tf_broadcaster` reads
+`/septentrio_gnss/insnavgeod` (preferred) or `/septentrio_gnss/navsatfix` +
+`/septentrio_gnss/imu` and publishes `map → base_link`. Replace it with your
+localization stack's TF when you have one.
+
+If your URDF lacks the camera optical frame, pass
+`publish_optical_tf:=true parent_camera_frame:=… optical_frame_name:=…` to
+the launch — it spawns a static TF for the standard body→optical rotation.
 
 ---
 

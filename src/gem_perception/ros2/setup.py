@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer='ACRL',
     maintainer_email='ogawa3@illinois.edu',
-    description='ROS2 (jazzy) text-promptable perception.',
+    description='ROS2 (humble) text-promptable perception.',
     license='MIT',
     entry_points={
         'console_scripts': [

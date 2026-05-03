@@ -1,4 +1,4 @@
-"""ROS2 (jazzy) wrapper: LangSAM → LiDAR fusion → goal pose."""
+"""ROS2 (humble) wrapper: LangSAM → LiDAR fusion → goal pose."""
 import os
 import threading
 
