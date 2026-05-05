@@ -24,6 +24,8 @@ setup(
         'console_scripts': [
             'adapt_mppi_node = mppi_controller.adapt_mppi_node:main',
             'adapt_mppi_generic_node = mppi_controller.adapt_mppi_generic_node:main',
+            'mppi_planner_node = mppi_controller.mppi_planner_node:main',
+            'pacmod_bridge_node = mppi_controller.pacmod_bridge_node:main',
         ],
     },
 )

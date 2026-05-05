@@ -36,6 +36,7 @@ def _launch_setup(context, *args, **kwargs):
     desired_speed = LaunchConfiguration('desired_speed').perform(context)
     weights = LaunchConfiguration('weights').perform(context)
     device = LaunchConfiguration('device').perform(context)
+    lowlevel_mode = LaunchConfiguration('lowlevel_mode').perform(context)
     enable_lidar = LaunchConfiguration('enable_lidar').perform(context)
     enable_fusion = LaunchConfiguration('enable_fusion').perform(context)
     enable_safety = LaunchConfiguration('enable_safety').perform(context)
@@ -156,6 +157,36 @@ def _launch_setup(context, *args, **kwargs):
                 'prediction_source': prediction_source,
             }],
         ))
+    elif controller == 'mppi-split':
+        # Split mode: planner publishes to /mppi/control_output,
+        # bridge node converts to PACMod commands
+        prediction_source = 'predicted' if prediction_mode != 'raw-only' else 'raw'
+        nodes.append(Node(
+            package='mppi_controller',
+            executable='mppi_planner_node',
+            name='mppi_planner_node',
+            output='screen',
+            parameters=[{
+                'vehicle_name': vehicle_name,
+                'desired_speed': float(desired_speed),
+                'rate_hz': 10.0,
+                'mppi/K': 600,
+                'mppi/H': 30,
+                'mppi/dt': 0.1,
+                'mppi/device': device,
+                'prediction_source': prediction_source,
+            }],
+        ))
+        nodes.append(Node(
+            package='mppi_controller',
+            executable='pacmod_bridge_node',
+            name='pacmod_bridge_node',
+            output='screen',
+            parameters=[{
+                'mode': lowlevel_mode,
+                'desired_speed': float(desired_speed),
+            }],
+        ))
     elif controller == 'stanley':
         stanley_config = PathJoinSubstitution([
             FindPackageShare('adapt_full'), 'config',
@@ -173,7 +204,7 @@ def _launch_setup(context, *args, **kwargs):
         ))
     else:
         raise ValueError(
-            f"Unknown controller '{controller}'. Use: mppi, stanley"
+            f"Unknown controller '{controller}'. Use: mppi, mppi-split, stanley"
         )
 
     # --- RViz ---
@@ -200,7 +231,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'controller', default_value='mppi',
-            description='Controller: mppi, stanley',
+            description='Controller: mppi, mppi-split, stanley',
+        ),
+        DeclareLaunchArgument(
+            'lowlevel_mode', default_value='pid',
+            description='Low-level throttle mode for mppi-split: pid, linear',
         ),
         DeclareLaunchArgument(
             'vehicle_name', default_value='e4',
