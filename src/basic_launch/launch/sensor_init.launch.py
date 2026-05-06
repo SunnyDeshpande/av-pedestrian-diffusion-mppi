@@ -110,13 +110,26 @@ def generate_launch_description():
                 ])
             )
     )
-    front_camera_launch = IncludeLaunchDescription(        
+    front_camera_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(
             get_package_share_directory('depthai_ros_driver'), 'launch'),
             '/rgbd_pcl.launch.py']),
+        launch_arguments={
+            'rectify_rgb': 'true',
+            'parent_frame': 'front_camera_link',
+            'publish_tf_from_calibration': 'true',
+        }.items(),
         condition=IfCondition(
             PythonExpression(["'", vehicle_name, "' == 'e4'"])
         )
+    )
+    tf2_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('basic_launch'), 'launch', 'tf2.launch.py'
+            ])
+        ),
+        launch_arguments={'vehicle_name': vehicle_name}.items(),
     )
     zed_camera_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -185,6 +198,7 @@ def generate_launch_description():
                 lucid_cam_launch,
                 front_camera_launch,
                 zed_camera_launch,
+                tf2_launch,
             ],
             handle_once=True
         )

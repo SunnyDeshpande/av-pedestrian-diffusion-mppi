@@ -2,6 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 from sensor_msgs.msg import PointCloud2
 from visualization_msgs.msg import Marker, MarkerArray
 from detected_object_msgs.msg import DetectedObject, DetectedObjectArray
@@ -11,8 +12,26 @@ import open3d as o3d
 import sensor_msgs_py.point_cloud2 as pc2
 from std_msgs.msg import Header, Int32
 from std_msgs.msg import Int32MultiArray
+from tf2_ros import Buffer, TransformListener
 import colorsys
 import math
+
+
+def transform_points(points_np, tf):
+    """Apply a TransformStamped to an Nx3 numpy array of points.
+
+    tf2_sensor_msgs ships only as C++ in Humble, so we do the rotation +
+    translation by hand rather than calling do_transform_cloud.
+    """
+    q = tf.transform.rotation
+    t = tf.transform.translation
+    qx, qy, qz, qw = q.x, q.y, q.z, q.w
+    rot = np.array([
+        [1 - 2 * (qy * qy + qz * qz),     2 * (qx * qy - qz * qw),     2 * (qx * qz + qy * qw)],
+        [    2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz),     2 * (qy * qz - qx * qw)],
+        [    2 * (qx * qz - qy * qw),     2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ])
+    return points_np @ rot.T + np.array([t.x, t.y, t.z])
 
 class LidarObjectDetector(Node):
     def __init__(self):
@@ -59,59 +78,108 @@ class LidarObjectDetector(Node):
         self.pub_pedestrian_pos = self.create_publisher(Int32MultiArray, '/lidar_pedestrian_position', 10)
         self.pub_human_debug = self.create_publisher(MarkerArray, '/human_debug_info', 10)
 
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        cuda_avail = o3d.core.cuda.is_available()
+        self.device = o3d.core.Device("CUDA:0" if cuda_avail else "CPU:0")
+        self.get_logger().info(
+            f"Open3D preprocessing device: {self.device} "
+            f"(CUDA available: {cuda_avail})")
+
         self.tracker = SimpleClusterTracker(self)
         self.get_logger().info("Lidar Object Detector with Human Tracking STARTED")
 
     def callback(self, msg: PointCloud2):
         try:
-            # loading point cloud
-            field_names = [f.name for f in msg.fields]
-            has_intensity = 'intensity' in field_names
-            read_fields = ('x', 'y', 'z', 'intensity') if has_intensity else ('x', 'y', 'z')
-            
-            cloud_gen = pc2.read_points(msg, field_names=read_fields, skip_nans=True)
-            pts_list = list(cloud_gen)
-            if not pts_list: return
-
-            pts_array = np.array(pts_list)
-            
-            if pts_array.dtype.names:
-                x = pts_array['x']
-                y = pts_array['y']
-                z = pts_array['z']
-                points_np = np.column_stack((x, y, z)).astype(np.float64)
-            else:
-                points_np = pts_array[:, 0:3].astype(np.float64)
-
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(points_np)
-
-            # Cropping
-            bbox = o3d.geometry.AxisAlignedBoundingBox(
-                [self.get_parameter('crop_min_x').value, self.get_parameter('crop_min_y').value, self.get_parameter('crop_min_z').value],
-                [self.get_parameter('crop_max_x').value, self.get_parameter('crop_max_y').value, self.get_parameter('crop_max_z').value]
-            )
-            pcd = pcd.crop(bbox)
-            if len(pcd.points) < 10: return
-
-            # Downsampling
-            pcd = pcd.voxel_down_sample(self.get_parameter('voxel_size').value)
-
-            # Statistical Outlier Removal
+            # Look up TF from sensor frame into base_footprint (X+ forward, Y+ left, Z=0 ground).
             try:
-                if len(pcd.points) > self.get_parameter('sor_nb_neighbors').value:
-                    _, ind = pcd.remove_statistical_outlier(
-                        nb_neighbors=self.get_parameter('sor_nb_neighbors').value,
-                        std_ratio=self.get_parameter('sor_std_ratio').value
-                    )
-                    pcd = pcd.select_by_index(ind)
-            except: pass
+                tf = self.tf_buffer.lookup_transform(
+                    'base_footprint', msg.header.frame_id,
+                    rclpy.time.Time(), timeout=Duration(seconds=0.05))
+            except Exception as tf_err:
+                self.get_logger().warn(
+                    f"TF base_footprint <- {msg.header.frame_id} not ready: {tf_err}",
+                    throttle_duration_sec=2.0)
+                return
 
-            # Ground Removal
-            points = np.asarray(pcd.points)
-            if len(points) > 0:
+            # Fast point parse: x,y,z are float32 at offsets 0,4,8 in the
+            # PointCloud2 byte layout for the Ouster driver (and most others).
+            n_pts = msg.width * msg.height
+            if n_pts == 0 or len(msg.data) < n_pts * msg.point_step:
+                return
+            raw = np.frombuffer(msg.data, dtype=np.uint8, count=n_pts * msg.point_step)
+            raw = raw.reshape(n_pts, msg.point_step)
+            xyz = raw[:, :12].view(np.float32).reshape(n_pts, 3)
+            finite = np.isfinite(xyz).all(axis=1)
+            points_np = xyz[finite]
+            if points_np.shape[0] == 0:
+                return
+
+            # Transform into base_footprint and rewrite header frame so all
+            # downstream outputs are in the vehicle frame.
+            points_np = transform_points(points_np.astype(np.float64), tf).astype(np.float32)
+            msg.header.frame_id = 'base_footprint'
+
+            # ---- GPU preprocessing via Open3D Tensor API ----
+            try:
+                positions_t = o3d.core.Tensor(points_np, device=self.device)
+                pcd_t = o3d.t.geometry.PointCloud(positions_t)
+
+                min_bound = np.array([
+                    self.get_parameter('crop_min_x').value,
+                    self.get_parameter('crop_min_y').value,
+                    self.get_parameter('crop_min_z').value,
+                ], dtype=np.float32)
+                max_bound = np.array([
+                    self.get_parameter('crop_max_x').value,
+                    self.get_parameter('crop_max_y').value,
+                    self.get_parameter('crop_max_z').value,
+                ], dtype=np.float32)
+                bbox_t = o3d.t.geometry.AxisAlignedBoundingBox(
+                    o3d.core.Tensor(min_bound, device=self.device),
+                    o3d.core.Tensor(max_bound, device=self.device),
+                )
+                pcd_t = pcd_t.crop(bbox_t)
+                if pcd_t.point["positions"].shape[0] < 10:
+                    return
+
+                pcd_t = pcd_t.voxel_down_sample(
+                    float(self.get_parameter('voxel_size').value))
+
+                nb = int(self.get_parameter('sor_nb_neighbors').value)
+                if pcd_t.point["positions"].shape[0] > nb and nb > 0:
+                    pcd_t, _ = pcd_t.remove_statistical_outliers(
+                        nb_neighbors=nb,
+                        std_ratio=float(self.get_parameter('sor_std_ratio').value))
+
+                # Ground filter: select_by_mask on the GPU.
+                ground_th = float(self.get_parameter('ground_z_threshold').value)
+                z_col = pcd_t.point["positions"][:, 2]
+                mask = z_col > ground_th
+                pcd_t = pcd_t.select_by_mask(mask)
+
+                points = pcd_t.point["positions"].cpu().numpy()
+            except Exception as gpu_err:
+                self.get_logger().warn(
+                    f"Tensor-API preprocessing failed, falling back to CPU: {gpu_err}",
+                    throttle_duration_sec=5.0)
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(points_np.astype(np.float64))
+                bbox = o3d.geometry.AxisAlignedBoundingBox(
+                    [self.get_parameter('crop_min_x').value, self.get_parameter('crop_min_y').value, self.get_parameter('crop_min_z').value],
+                    [self.get_parameter('crop_max_x').value, self.get_parameter('crop_max_y').value, self.get_parameter('crop_max_z').value])
+                pcd = pcd.crop(bbox)
+                pcd = pcd.voxel_down_sample(self.get_parameter('voxel_size').value)
+                points = np.asarray(pcd.points)
                 points = points[points[:, 2] > self.get_parameter('ground_z_threshold').value]
-            if len(points) < 10: return
+
+            if len(points) < 10:
+                return
+
+            # Build a legacy CPU PointCloud for DBSCAN (Tensor API doesn't expose it in 0.18).
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
 
             # Publish processed point cloud
             header = msg.header
@@ -310,13 +378,14 @@ class SimpleClusterTracker:
                 continue
             obj = DetectedObject()
             obj.id = tid
-            obj.center = Vector3(x=float(-track['centroid'][0]), # Negate X
-                                 y=float(-track['centroid'][1]), # Negate Y
-                                 z=float(track['centroid'][2] + 2.0)) # offset height
+            obj.center = Vector3(x=float(track['centroid'][0]),
+                                 y=float(track['centroid'][1]),
+                                 z=float(track['centroid'][2]))
             obj.point_count = len(cluster['points'])
             dx, dy = track['centroid'][0], track['centroid'][1]
             obj.distance = math.hypot(dx, dy)
-            obj.angle_deg = math.degrees(math.atan2(-dx, dy))
+            # Bearing convention: 0°=right (-Y), 90°=front (+X), CCW-positive.
+            obj.angle_deg = math.degrees(math.atan2(dx, -dy))
             arr.objects.append(obj)
         self.node.pub_objects.publish(arr)
 
@@ -407,8 +476,9 @@ class SimpleClusterTracker:
             cx, cy = selected_track['centroid'][0], selected_track['centroid'][1]
             cz = selected_track['centroid'][2]
             dist_val = int(math.hypot(cx, cy) + 0.5)
-            
-            angle_rad = math.atan2(-cx, cy)
+
+            # Bearing convention: 0°=right (-Y), 90°=front (+X), CCW-positive.
+            angle_rad = math.atan2(cx, -cy)
             angle_deg = int(math.degrees(angle_rad) + 0.5)
             if angle_deg < 0: angle_deg += 360
 

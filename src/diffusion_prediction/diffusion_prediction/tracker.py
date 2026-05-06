@@ -139,7 +139,11 @@ class Tracker:
 
         Returns
         -------
-        history : np.ndarray (T_hist, 4)  [x, y, vx, vy] in ego frame at t=0
+        history : np.ndarray (T_hist, 4)  [x, y, vx, vy], pedestrian-centric:
+                                          positions are normalized so the most
+                                          recent position is the origin (matches
+                                          the training-side inference spec).
+                                          Velocities stay in real m/s.
         mask    : np.ndarray (T_hist,)     1.0 = valid, 0.0 = padding
         """
         tr = self.tracks[track_id]
@@ -159,10 +163,9 @@ class Tracker:
             history[dst, 1] = path[src][1]  # y
             mask[dst] = 1.0
 
-        # Compute velocities via first-difference
+        # Compute velocities via first-difference (real m/s)
         for i in range(1, T_hist):
             if mask[i] > 0 and mask[i - 1] > 0:
-                # Use actual time difference if available
                 src_curr = n - fill + (i - (T_hist - fill))
                 src_prev = src_curr - 1
                 if 0 <= src_prev < len(times) and 0 <= src_curr < len(times):
@@ -171,7 +174,8 @@ class Tracker:
                         history[i, 2] = (history[i, 0] - history[i - 1, 0]) / dt_actual
                         history[i, 3] = (history[i, 1] - history[i - 1, 1]) / dt_actual
 
-        # Normalize to current position (make last position the origin)
+        # Pedestrian-centric: shift positions so the most recent point is at the
+        # origin. The model's training distribution requires history[-1] = (0, 0).
         if mask[-1] > 0:
             ref_x = history[-1, 0]
             ref_y = history[-1, 1]

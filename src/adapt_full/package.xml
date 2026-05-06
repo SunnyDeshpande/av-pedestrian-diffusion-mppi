@@ -16,6 +16,7 @@
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>detected_object_msgs</depend>
 
   <!-- Message dependencies for vehicle control -->
   <depend>pacmod2_msgs</depend>

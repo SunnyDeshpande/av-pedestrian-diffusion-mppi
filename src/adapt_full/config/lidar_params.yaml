@@ -1,18 +1,18 @@
-lidar_preprocessor:
+/**:
   ros__parameters:
-    # Cropping parameters - Define 3D region of interest
-    crop_min_x: -15.0
-    crop_max_x: 0.0
-    crop_min_y: -3.0
-    crop_max_y: 3.0
-    crop_min_z: -2.1
-    crop_max_z: 1.0
+    # ROI in base_footprint (X forward, Y left, Z up; Z=0 is ground)
+    crop_min_x: 0.0       # don't look behind the vehicle
+    crop_max_x: 15.0      # 15 m ahead
+    crop_min_y: -3.0      # 3 m to the right
+    crop_max_y: 3.0       # 3 m to the left
+    crop_min_z: -1.2      # tolerate slight below-ground noise
+    crop_max_z: 2.5       # tallest plausible pedestrian
 
     # Preprocessing parameters
     voxel_size: 0.15                # Voxel grid downsampling size (meters)
     sor_nb_neighbors: 30            # Statistical outlier removal - number of neighbors
     sor_std_ratio: 1.5              # Statistical outlier removal - std ratio threshold
-    ground_z_threshold: -1.0        # Z-threshold for ground plane removal (meters)
+    ground_z_threshold: 0.4        # keep points >=5 cm above ground (base_footprint Z)
 
     # Clustering & Tracking parameters
     dbscan_eps: 0.6                 # DBSCAN epsilon - max distance between points (meters)
@@ -38,4 +38,3 @@ lidar_preprocessor:
     min_motion_threshold: 0.3       # Minimum motion to be considered moving (meters/frame)
     static_check_frames: 10         # Number of frames to determine if object is static
     max_intensity_avg: 99999.0      # Maximum average intensity threshold
-

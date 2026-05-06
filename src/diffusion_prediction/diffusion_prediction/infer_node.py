@@ -15,7 +15,7 @@ from rclpy.node import Node
 
 from std_msgs.msg import Int32MultiArray, Float64, Float32MultiArray
 from geometry_msgs.msg import Twist
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 from pacmod2_msgs.msg import VehicleSpeedRpt
 
 from diffusion_prediction.tracker import Tracker
@@ -41,7 +41,7 @@ class DiffusionPredictorNode(Node):
         self.declare_parameter("weights", "")
         self.declare_parameter("device", "cuda:0")
         self.declare_parameter("K", 20)
-        self.declare_parameter("ddim_steps", 10)
+        self.declare_parameter("ddim_steps", 5)
         self.declare_parameter("min_history_count", 5)
         self.declare_parameter("prediction_time", 5.0)
         self.declare_parameter("prediction_points", 20)
@@ -49,6 +49,9 @@ class DiffusionPredictorNode(Node):
         self.declare_parameter("latency_warn_ms", 80.0)
         self.declare_parameter("prediction_mode", "joint")  # "single" or "joint"
         self.declare_parameter("max_agents", 16)
+        # When True, build the model's history from /fusion_pedestrian_paths
+        # (multi-track, base_footprint XY) instead of the internal Tracker.
+        self.declare_parameter("use_fusion_paths", True)
 
         self.weights_path = self.get_parameter("weights").value
         self.device_str = self.get_parameter("device").value
@@ -61,6 +64,9 @@ class DiffusionPredictorNode(Node):
         self.latency_warn = self.get_parameter("latency_warn_ms").value
         self.prediction_mode = self.get_parameter("prediction_mode").value
         self.max_agents = self.get_parameter("max_agents").value
+        self.use_fusion_paths_pref = bool(self.get_parameter("use_fusion_paths").value)
+        self._fusion_paths_dt = 0.1  # estimated period between fusion-paths msgs (s)
+        self._last_fusion_paths_t = None
 
         # --------------- Subscribers ---------------
         self.sub_ped = self.create_subscription(
@@ -70,6 +76,14 @@ class DiffusionPredictorNode(Node):
         self.sub_vehicle = self.create_subscription(
             VehicleSpeedRpt, "vehicle_rpt",
             self.vehicle_cb, 10,
+        )
+        # Per-pedestrian path histories from the fusion node.
+        # Each Marker in the array is one tracked pedestrian's LINE_STRIP.
+        # Stored as track_id -> list[(x, y)] in base_footprint.
+        self.fusion_paths: dict[int, list[tuple[float, float]]] = {}
+        self.sub_fusion_paths = self.create_subscription(
+            MarkerArray, "/fusion_pedestrian_paths",
+            self.fusion_paths_cb, 10,
         )
 
         # --------------- Publishers ---------------
@@ -90,7 +104,15 @@ class DiffusionPredictorNode(Node):
 
         # Temporal EMA state: track_id -> previous best trajectory (20, 2)
         self._prev_trajs: dict[int, np.ndarray] = {}
-        self._temporal_alpha = 0.3  # blend: 0=all previous, 1=all current
+        self.declare_parameter("temporal_alpha", 0.55)
+        self._temporal_alpha = float(self.get_parameter("temporal_alpha").value)
+        # Anchor the predicted trajectory's first point to the pedestrian's
+        # current position so the marker always starts at the pedestrian
+        # (eliminates start-of-trajectory noise and fusion-path smoothing lag).
+        self.declare_parameter("anchor_to_current_position", True)
+        self._anchor_to_current = bool(
+            self.get_parameter("anchor_to_current_position").value
+        )
 
         # --------------- Model ---------------
         self.model = None
@@ -148,6 +170,97 @@ class DiffusionPredictorNode(Node):
             self.get_logger().error(f"Failed to load model: {e}")
             self.model = None
 
+    def fusion_paths_cb(self, msg: MarkerArray):
+        """Cache the latest per-pedestrian paths from the fusion node.
+
+        Each marker.id is the track id. action == DELETE removes a track.
+        Points are in base_footprint (X+ forward, Y+ left).
+        """
+        # EMA-update inter-message dt so velocity finite-differences are calibrated.
+        now = float(self.get_clock().now().nanoseconds) * 1e-9
+        if self._last_fusion_paths_t is not None:
+            dt_observed = now - self._last_fusion_paths_t
+            if 0.01 < dt_observed < 1.0:
+                self._fusion_paths_dt = 0.7 * self._fusion_paths_dt + 0.3 * dt_observed
+        self._last_fusion_paths_t = now
+
+        for m in msg.markers:
+            if m.action == Marker.DELETE:
+                self.fusion_paths.pop(m.id, None)
+                continue
+            self.fusion_paths[m.id] = [(p.x, p.y) for p in m.points]
+
+    def get_fusion_path(self, track_id):
+        """Return cached path for a track id, or None if not seen."""
+        return self.fusion_paths.get(track_id)
+
+    def _build_inputs_from_tracker(self, T_hist=20):
+        """Return (active_ids, histories, masks, ego_vels, tid_to_xy) from internal tracker."""
+        active_ids = []
+        histories = []
+        masks = []
+        ego_vels = []
+        tid_to_xy = {}
+        for tid, tr in self.tracker.tracks.items():
+            hist, mask = self.tracker.get_history(tid, T_hist=T_hist)
+            if mask.sum() < self.min_hist:
+                continue
+            active_ids.append(tid)
+            histories.append(hist)
+            masks.append(mask)
+            ego_vels.append(np.array([self.vehicle_speed, 0.0], dtype=np.float32))
+            tid_to_xy[tid] = (tr.x, tr.y)
+        return active_ids, histories, masks, ego_vels, tid_to_xy
+
+    def _build_inputs_from_fusion_paths(self, T_hist=20):
+        """Build model inputs directly from /fusion_pedestrian_paths.
+
+        Per the training-side inference spec, the model is **pedestrian-centric**:
+        history positions are normalized so the most recent point is at (0, 0)
+        and the model output is a 5 s trajectory of *displacements* from that
+        same origin. Velocities stay in real m/s (computed from actual inter-
+        message dt). The pedestrian's last base_footprint XY is recorded in
+        `tid_to_xy[tid]` so we can shift the model output back into base_footprint
+        after inference.
+        """
+        active_ids = []
+        histories = []
+        masks = []
+        ego_vels = []
+        tid_to_xy = {}
+        dt = max(self._fusion_paths_dt, 1e-3)
+
+        for tid, path in self.fusion_paths.items():
+            if len(path) < self.min_hist:
+                continue
+            recent = path[-T_hist:]
+            n = len(recent)
+            hist = np.zeros((T_hist, 4), dtype=np.float32)
+            mask = np.zeros(T_hist, dtype=np.float32)
+            for i in range(n):
+                dst = T_hist - n + i
+                hist[dst, 0] = recent[i][0]
+                hist[dst, 1] = recent[i][1]
+                mask[dst] = 1.0
+            for i in range(1, T_hist):
+                if mask[i] > 0 and mask[i - 1] > 0:
+                    hist[i, 2] = (hist[i, 0] - hist[i - 1, 0]) / dt
+                    hist[i, 3] = (hist[i, 1] - hist[i - 1, 1]) / dt
+            # Pedestrian-centric normalization: last observed position -> origin.
+            # Velocities are kept in real m/s (no normalization).
+            ref_x = float(hist[-1, 0])
+            ref_y = float(hist[-1, 1])
+            for i in range(T_hist):
+                if mask[i] > 0:
+                    hist[i, 0] -= ref_x
+                    hist[i, 1] -= ref_y
+            active_ids.append(tid)
+            histories.append(hist)
+            masks.append(mask)
+            ego_vels.append(np.array([self.vehicle_speed, 0.0], dtype=np.float32))
+            tid_to_xy[tid] = (ref_x, ref_y)
+        return active_ids, histories, masks, ego_vels, tid_to_xy
+
     def vehicle_cb(self, msg: VehicleSpeedRpt):
         if msg.vehicle_speed_valid:
             self.vehicle_speed = float(msg.vehicle_speed)
@@ -164,35 +277,25 @@ class DiffusionPredictorNode(Node):
         t_now = float(now.nanoseconds) * 1e-9
         stamp = now.to_msg()
 
-        # Decode polar -> Cartesian
+        # Decode polar -> Cartesian (still used to drive the internal tracker
+        # so the fallback CV predictor and any tracker-based features work).
         detections = decode_fusion_msg(list(msg.data))
-        if detections.shape[0] == 0:
-            return
 
-        # Update tracker
-        deleted = self.tracker.update(detections, t_now)
+        if detections.shape[0] > 0:
+            deleted = self.tracker.update(detections, t_now)
+            for tid in deleted:
+                self._sticky_state.pop(tid, None)
 
-        # Clean up sticky state for deleted tracks
-        for tid in deleted:
-            self._sticky_state.pop(tid, None)
-
-        # Collect tracks with enough history
-        active_ids = []
-        histories = []
-        masks = []
-        ego_vels = []
-
-        for tid, tr in self.tracker.tracks.items():
-            hist, mask = self.tracker.get_history(tid, T_hist=20)
-            presence = mask.sum()
-            if presence < self.min_hist:
-                continue
-            active_ids.append(tid)
-            histories.append(hist)
-            masks.append(mask)
-            ego_vels.append(
-                np.array([self.vehicle_speed, 0.0], dtype=np.float32)
-            )
+        # Choose the source of histories. The fusion paths give us multi-track
+        # XY in base_footprint with stable IDs, which is what we want to feed
+        # the model. Fall back to the internal tracker if no paths yet.
+        use_fusion = self.use_fusion_paths_pref and bool(self.fusion_paths)
+        if use_fusion:
+            active_ids, histories, masks, ego_vels, tid_to_xy = \
+                self._build_inputs_from_fusion_paths(T_hist=20)
+        else:
+            active_ids, histories, masks, ego_vels, tid_to_xy = \
+                self._build_inputs_from_tracker(T_hist=20)
 
         if not active_ids or self.model is None:
             # Fallback: publish using tracker's constant-velocity prediction
@@ -321,11 +424,28 @@ class DiffusionPredictorNode(Node):
                 del self._prev_trajs[tid]
 
         # --- Select primary pedestrian ---
-        # Transform back: add current position offset (undo the origin centering)
+        # Step 1: shift pedestrian-centric trajectories back into base_footprint
+        # by adding the pedestrian's current position (matches the training-
+        # side inference spec: published_x = predicted_x + pedestrian_current_x).
         for m_idx, tid in enumerate(active_ids):
-            tr = self.tracker.tracks[tid]
-            best_trajs[m_idx, :, 0] += tr.x
-            best_trajs[m_idx, :, 1] += tr.y
+            cx, cy = tid_to_xy[tid]
+            best_trajs[m_idx, :, 0] += cx
+            best_trajs[m_idx, :, 1] += cy
+
+        # Step 2 (optional): snap the trajectory's first point to the
+        # pedestrian's current position so the marker visibly emanates from
+        # the pedestrian. With pedestrian-centric output, the first model
+        # point is nominally near the origin (one timestep ahead of last
+        # history), so after the shift in step 1 traj[0] is already close to
+        # (cx, cy); this just removes residual noise / fusion-path smoothing
+        # lag while preserving the predicted shape.
+        if self._anchor_to_current:
+            for m_idx, tid in enumerate(active_ids):
+                cur_x, cur_y = tid_to_xy[tid]
+                shift_x = cur_x - float(best_trajs[m_idx, 0, 0])
+                shift_y = cur_y - float(best_trajs[m_idx, 0, 1])
+                best_trajs[m_idx, :, 0] += shift_x
+                best_trajs[m_idx, :, 1] += shift_y
 
         # Compute TTC for each pedestrian
         ttc_values = {}
@@ -347,8 +467,8 @@ class DiffusionPredictorNode(Node):
         else:
             min_dist = math.inf
             for m_idx, tid in enumerate(active_ids):
-                tr = self.tracker.tracks[tid]
-                d = math.sqrt(tr.x ** 2 + tr.y ** 2)
+                cx, cy = tid_to_xy[tid]
+                d = math.sqrt(cx ** 2 + cy ** 2)
                 if d < min_dist:
                     min_dist = d
                     primary_idx = m_idx
@@ -360,8 +480,8 @@ class DiffusionPredictorNode(Node):
             self.pub_prediction.publish(marker)
 
             # Twist
-            tr = self.tracker.tracks[active_ids[primary_idx]]
-            twist = build_twist_msg(tr.x, tr.y)
+            cx, cy = tid_to_xy[active_ids[primary_idx]]
+            twist = build_twist_msg(cx, cy)
             self.pub_motion.publish(twist)
 
             # TTC

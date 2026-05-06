@@ -24,10 +24,8 @@ setup(
     license='BSD-3-Clause',
     entry_points={
         'console_scripts': [
-            'yolo_person_detect = yolo_person_detector.detect_node:main',
-            'video_publisher = yolo_person_detector.video_publisher:main',
-            'rgbd_pedestrain_detector = yolo_person_detector.rgbd_pedestrain_detector:main',
-            'pedestrian_behaviour_predictor = pedestrian_behaviour_predictor:main',
+            'rgbd_pedestrian_detector = yolo_person_detector.rgbd_pedestrian_detector:main',
+            'pedestrian_behaviour_predictor = yolo_person_detector.pedestrian_behaviour_predictor:main',
         ],
     },
 )

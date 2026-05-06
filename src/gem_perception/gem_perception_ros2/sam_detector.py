@@ -48,7 +48,7 @@ class LangSamDetector:
         os.environ.setdefault("HF_HOME", os.path.join(self.models_root, "huggingface"))
         os.environ.setdefault("TORCH_HOME", os.path.join(self.models_root, "torch"))
 
-        if sys.version_info >= (3, 10):
+        if os.environ.get("GEM_SAM_BACKEND", "sam1").lower() == "langsam":
             from lang_sam import LangSAM
             self._backend = "langsam"
             self._model = LangSAM(sam_type=sam_type)

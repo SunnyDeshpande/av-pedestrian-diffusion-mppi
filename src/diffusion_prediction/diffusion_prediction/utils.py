@@ -198,19 +198,22 @@ def _extrapolate_from_history(hist: np.ndarray, T_fut: int = 20, dt: float = 0.2
 
     Parameters
     ----------
-    hist : (T_hist, 4) array with [x, y, vx, vy] — ego-normalized, last pos at origin
+    hist : (T_hist, 4) array with [x, y, vx, vy] — pedestrian-centric, last
+           position at origin (matches the training-side inference spec).
     T_fut : number of future steps to extrapolate
     dt : timestep
 
     Returns
     -------
-    extrapolated : (T_fut, 2) future positions
+    extrapolated : (T_fut, 2) future positions in pedestrian-centric frame
+                   (consistent with the diffusion model's output, which also
+                   starts implicitly near the origin)
     """
     # Use last velocity for speed/heading
     vx, vy = hist[-1, 2], hist[-1, 3]
     speed = math.sqrt(vx * vx + vy * vy)
     if speed < 0.05:
-        # Essentially stationary — predict staying put
+        # Essentially stationary — predict staying put at the origin
         return np.zeros((T_fut, 2), dtype=np.float32)
 
     heading = math.atan2(vy, vx)
@@ -238,7 +241,8 @@ def _extrapolate_from_history(hist: np.ndarray, T_fut: int = 20, dt: float = 0.2
     # Clamp turning rate to plausible range (max ~90 deg/s)
     omega = max(-1.57, min(1.57, omega))
 
-    # Extrapolate with constant speed + constant turning rate
+    # Extrapolate with constant speed + constant turning rate from the
+    # origin (pedestrian-centric frame).
     extrap = np.zeros((T_fut, 2), dtype=np.float32)
     x, y = 0.0, 0.0
     h = heading

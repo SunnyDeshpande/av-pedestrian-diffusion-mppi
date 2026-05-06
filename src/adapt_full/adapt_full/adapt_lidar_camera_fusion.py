@@ -2,9 +2,43 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32MultiArray
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
 import message_filters
+from collections import deque
 import numpy as np
 import math
+
+
+def _hue_to_rgb(h):
+    """Tiny hue -> RGB conversion (S=V=1) so each track gets a distinct color."""
+    import colorsys
+    return colorsys.hsv_to_rgb(h, 0.85, 0.95)
+
+
+def _moving_average(points, window):
+    """Centered moving-average smoother over an iterable of (x, y).
+
+    window=1 is a no-op. Edges shrink the window so the line still starts/ends
+    at the first/last sample.
+    """
+    if window <= 1 or not points:
+        return list(points)
+    pts = list(points)
+    n = len(pts)
+    half = window // 2
+    out = []
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        sx = 0.0
+        sy = 0.0
+        for j in range(lo, hi):
+            sx += pts[j][0]
+            sy += pts[j][1]
+        c = hi - lo
+        out.append((sx / c, sy / c))
+    return out
 
 
 class SensorFusionNode(Node):
@@ -52,6 +86,56 @@ class SensorFusionNode(Node):
             '/fusion_pedestrian_position',
             10
         )
+
+        # ---- Pedestrian path tracking ----
+        self.declare_parameter('path_max_points', 200)
+        self.declare_parameter('path_clear_after_no_detect_frames', 20)
+        self.declare_parameter('path_frame_id', 'base_footprint')
+        # Greedy multi-pedestrian tracker for per-track path history.
+        self.declare_parameter('track_match_distance', 1.5)  # meters
+        # Frames without a match before a track is dropped (and its LINE_STRIP
+        # is DELETEd). Small values make paths disappear quickly when a
+        # pedestrian leaves frame at the cost of brief flicker on missed
+        # detections. ~3 frames @ 10 Hz ≈ 0.3 s.
+        self.declare_parameter('track_max_age', 3)
+        # Marker lifetime in seconds. Acts as a safety net so RViz auto-clears
+        # a stale path even if the explicit DELETE marker is dropped or the
+        # node stops publishing. Should be > one fusion-callback period.
+        self.declare_parameter('track_marker_lifetime_sec', 0.5)
+        # EMA blend on track XY; smaller = smoother, slower to react.
+        # Matches the diffusion tracker's smooth_alpha pattern.
+        self.declare_parameter('track_smooth_alpha', 0.15)
+        # Centered moving-average window applied to the visualization path
+        # only (does not affect tracker matching). 1 = off; bigger = smoother.
+        self.declare_parameter('path_smoothing_window', 7)
+        # Cap each pedestrian's stored history to the most recent N metres
+        # of arc-length. Prevents the LINE_STRIP marker (and the diffusion
+        # node's history window) from accumulating stale points while the
+        # pedestrian is moving across the scene. 0 = disabled.
+        self.declare_parameter('path_max_arc_length_m', 3.0)
+        self.path_max_points = int(self.get_parameter('path_max_points').value)
+        self.path_clear_after = int(self.get_parameter('path_clear_after_no_detect_frames').value)
+        self.path_frame_id = self.get_parameter('path_frame_id').get_parameter_value().string_value
+        self.track_match_dist = float(self.get_parameter('track_match_distance').value)
+        self.track_max_age = int(self.get_parameter('track_max_age').value)
+        self.track_marker_lifetime_sec = float(
+            self.get_parameter('track_marker_lifetime_sec').value
+        )
+        self.track_smooth_alpha = float(self.get_parameter('track_smooth_alpha').value)
+        self.path_smoothing_window = max(1, int(self.get_parameter('path_smoothing_window').value))
+        self.path_max_arc_length_m = float(
+            self.get_parameter('path_max_arc_length_m').value
+        )
+        # Single-closest path (back-compat).
+        self.path_history = deque(maxlen=self.path_max_points)
+        self.path_filtered_xy = None  # EMA state for back-compat single-closest path
+        self.no_detect_streak = 0
+        self.path_pub = self.create_publisher(Marker, '/fusion_pedestrian_path', 10)
+        # Per-pedestrian paths: track_id -> {'path': deque, 'age': int, 'last_xy': (x,y)}
+        self.tracks = {}
+        self.next_track_id = 0
+        self.paths_pub = self.create_publisher(MarkerArray, '/fusion_pedestrian_paths', 10)
+        self._known_track_ids = set()  # for emitting DELETE markers when tracks die
 
         # Statistics for logging
         self.fusion_count = 0
@@ -101,6 +185,167 @@ class SensorFusionNode(Node):
         if direction_deg < 0:
             direction_deg += 360
         return (distance, direction_deg)
+
+    def polar_to_base_footprint(self, distance, direction_deg):
+        """(dist, deg with 0=right, 90=front) -> (x, y) in base_footprint."""
+        rad = math.radians(direction_deg)
+        return (distance * math.sin(rad), -distance * math.cos(rad))
+
+    def _trim_path_to_arc_length(self, path):
+        """Drop oldest points from a track's path until the cumulative
+        arc-length walking from the most recent point backward fits within
+        ``self.path_max_arc_length_m``. ``path`` is mutated in place.
+
+        Disabled when ``path_max_arc_length_m <= 0``. With the default 3 m,
+        a pedestrian walking at 1.4 m/s retains ~2 s of history (~20 frames
+        at 10 Hz), which matches the diffusion model's history window.
+        """
+        max_arc = self.path_max_arc_length_m
+        if max_arc <= 0.0 or len(path) < 2:
+            return
+        # Walk from the newest point backward, summing segment lengths until
+        # we exceed max_arc. Everything older than that index is stale.
+        keep_from_end = 1
+        cum = 0.0
+        for i in range(len(path) - 1, 0, -1):
+            x1, y1 = path[i]
+            x0, y0 = path[i - 1]
+            cum += math.hypot(x1 - x0, y1 - y0)
+            if cum > max_arc:
+                break
+            keep_from_end += 1
+        n_drop = len(path) - keep_from_end
+        for _ in range(n_drop):
+            path.popleft()
+
+    def update_tracks(self, fused_detections):
+        """Greedy multi-pedestrian tracker. Updates self.tracks in place."""
+        # Convert detections to base_footprint XY.
+        detections_xy = [
+            self.polar_to_base_footprint(d['dist'], d['deg'])
+            for d in fused_detections
+        ]
+
+        matched_tids = set()
+        matched_dets = set()
+        alpha = self.track_smooth_alpha
+
+        # Greedy match: for each existing track, find closest unmatched detection.
+        for tid, tr in list(self.tracks.items()):
+            best_d = self.track_match_dist
+            best_idx = -1
+            tx, ty = tr['last_xy']
+            for i, (dx, dy) in enumerate(detections_xy):
+                if i in matched_dets:
+                    continue
+                d = math.hypot(dx - tx, dy - ty)
+                if d < best_d:
+                    best_d = d
+                    best_idx = i
+            if best_idx >= 0:
+                dx, dy = detections_xy[best_idx]
+                # EMA-smoothed XY: filters out polar-grid quantization.
+                sx = alpha * dx + (1.0 - alpha) * tx
+                sy = alpha * dy + (1.0 - alpha) * ty
+                tr['path'].append((sx, sy))
+                tr['last_xy'] = (sx, sy)
+                tr['age'] = 0
+                self._trim_path_to_arc_length(tr['path'])
+                matched_tids.add(tid)
+                matched_dets.add(best_idx)
+
+        # Unmatched detections start new tracks.
+        for i, xy in enumerate(detections_xy):
+            if i in matched_dets:
+                continue
+            tid = self.next_track_id
+            self.next_track_id += 1
+            self.tracks[tid] = {
+                'path': deque([xy], maxlen=self.path_max_points),
+                'age': 0,
+                'last_xy': xy,
+            }
+            matched_tids.add(tid)
+
+        # Age + prune unmatched tracks.
+        for tid in list(self.tracks.keys()):
+            if tid not in matched_tids:
+                self.tracks[tid]['age'] += 1
+                if self.tracks[tid]['age'] > self.track_max_age:
+                    del self.tracks[tid]
+
+    def publish_paths_marker_array(self):
+        """One LINE_STRIP marker per active track + DELETE markers for vanished ones."""
+        ma = MarkerArray()
+        stamp = self.get_clock().now().to_msg()
+
+        active = set(self.tracks.keys())
+        # DELETE markers for tracks we previously knew about but that are gone.
+        for tid in self._known_track_ids - active:
+            del_m = Marker()
+            del_m.header.frame_id = self.path_frame_id
+            del_m.header.stamp = stamp
+            del_m.ns = 'fusion_pedestrian_paths'
+            del_m.id = tid
+            del_m.action = Marker.DELETE
+            ma.markers.append(del_m)
+
+        # ADD/MODIFY markers for active tracks.
+        # Color by track id (stable hue per track).
+        lt_total = max(0.0, self.track_marker_lifetime_sec)
+        lt_sec = int(lt_total)
+        lt_nsec = int((lt_total - lt_sec) * 1e9)
+        for tid, tr in self.tracks.items():
+            m = Marker()
+            m.header.frame_id = self.path_frame_id
+            m.header.stamp = stamp
+            m.ns = 'fusion_pedestrian_paths'
+            m.id = tid
+            m.type = Marker.LINE_STRIP
+            m.action = Marker.ADD if tr['path'] else Marker.DELETE
+            m.scale.x = 0.08
+            m.color.a = 1.0
+            # Distinct hue per track id (HSV-like via mod cycle).
+            hue = (tid * 47) % 360 / 360.0
+            r, g, b = _hue_to_rgb(hue)
+            m.color.r, m.color.g, m.color.b = r, g, b
+            m.pose.orientation.w = 1.0
+            # Auto-expire in RViz if not refreshed; safety net for dropped
+            # DELETE markers or a stalled fusion callback.
+            m.lifetime.sec = lt_sec
+            m.lifetime.nanosec = lt_nsec
+            for x, y in _moving_average(tr['path'], self.path_smoothing_window):
+                p = Point()
+                p.x = float(x)
+                p.y = float(y)
+                p.z = 0.05
+                m.points.append(p)
+            ma.markers.append(m)
+
+        self.paths_pub.publish(ma)
+        self._known_track_ids = active
+
+    def publish_path_marker(self):
+        marker = Marker()
+        marker.header.frame_id = self.path_frame_id
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = 'fusion_pedestrian_path'
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD if self.path_history else Marker.DELETE
+        marker.scale.x = 0.08  # line width (m)
+        marker.color.a = 1.0
+        marker.color.r = 1.0
+        marker.color.g = 0.5
+        marker.color.b = 0.0
+        marker.pose.orientation.w = 1.0
+        for x, y in _moving_average(self.path_history, self.path_smoothing_window):
+            p = Point()
+            p.x = float(x)
+            p.y = float(y)
+            p.z = 0.05  # just above ground for visibility
+            marker.points.append(p)
+        self.path_pub.publish(marker)
 
     def euclidean_distance(self, pos1, pos2):
         dx = pos2[0] - pos1[0]
@@ -217,6 +462,13 @@ class SensorFusionNode(Node):
             fused_msg.data = []
             self.fusion_pub.publish(fused_msg)
             self.get_logger().debug('No detections from either sensor')
+            self.no_detect_streak += 1
+            if self.no_detect_streak >= self.path_clear_after:
+                self.path_history.clear()
+                self.path_filtered_xy = None
+            self.update_tracks([])
+            self.publish_path_marker()
+            self.publish_paths_marker_array()
             return
 
         # Step 2 & 3: Match detections
@@ -257,6 +509,30 @@ class SensorFusionNode(Node):
         fused_msg = Int32MultiArray()
         fused_msg.data = fused_array
         self.fusion_pub.publish(fused_msg)
+
+        # Append the closest fused detection to the single-closest path history (back-compat).
+        if fused_detections:
+            closest = min(fused_detections, key=lambda d: d['dist'])
+            x, y = self.polar_to_base_footprint(closest['dist'], closest['deg'])
+            if self.path_filtered_xy is None:
+                self.path_filtered_xy = (x, y)
+            else:
+                a = self.track_smooth_alpha
+                fx, fy = self.path_filtered_xy
+                self.path_filtered_xy = (a * x + (1.0 - a) * fx,
+                                         a * y + (1.0 - a) * fy)
+            self.path_history.append(self.path_filtered_xy)
+            self.no_detect_streak = 0
+        else:
+            self.no_detect_streak += 1
+            if self.no_detect_streak >= self.path_clear_after:
+                self.path_history.clear()
+                self.path_filtered_xy = None
+        self.publish_path_marker()
+
+        # Multi-pedestrian tracker: per-track paths.
+        self.update_tracks(fused_detections)
+        self.publish_paths_marker_array()
 
         # Logging
         self.get_logger().info(

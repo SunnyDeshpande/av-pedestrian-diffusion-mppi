@@ -30,7 +30,7 @@ class RgbdPedestrianDetector(Node):
         super().__init__('rgbd_pedestrian_detector')
 
         # ------- Parameters -------
-        self.declare_parameteCOCO_PERSON_CLASS_IDr('publish_debug_image', True)
+        self.declare_parameter('publish_debug_image', True)
         self.declare_parameter('model_path', 'yolo11n.pt')
         self.declare_parameter('conf', 0.35)
         self.declare_parameter('iou', 0.45)
@@ -203,18 +203,22 @@ class RgbdPedestrianDetector(Node):
                 Y_optical = (cy - cy0) * z / fy
                 Z_optical = z
 
-                # Approximate transform to base_link:
-                X_base = Y_optical 
+                # Approximate transform to base_link (x forward, y left, z up).
+                # Camera is mounted ~0.535 m forward of base_link.
+                # Project to ground plane (z=0) so the marker sits on the floor
+                # rather than at the bbox-center's torso height.
+                CAM_X_OFFSET = 0.535
+                X_base = Z_optical + CAM_X_OFFSET
                 Y_base = -X_optical
-                Z_base = Z_optical
+                Z_base = 0.0
 
-                # Distance in ground plane (Y,Z)
-                dist = float(np.sqrt(Y_base**2 + Z_base**2))
+                # Distance in ground plane (X forward, Y left)
+                dist = float(np.sqrt(X_base**2 + Y_base**2))
 
                 # Direction:
                 # 0° axis = right side of vehicle (-ve Y axis of ego frame),
                 # CCW positive: 0° right, 90° front, 180° left, 270° back.
-                angle_rad = np.arctan2(Z_base, -Y_base)
+                angle_rad = np.arctan2(X_base, -Y_base)
                 angle_deg = float(np.degrees(angle_rad))
                 if angle_deg < 0.0:
                     angle_deg += 360.0
@@ -253,7 +257,7 @@ class RgbdPedestrianDetector(Node):
 
                 # Optional 3D marker
                 marker = Marker()
-                marker.header.frame_id = 'base_link'
+                marker.header.frame_id = 'base_footprint'
                 marker.header.stamp = msg.header.stamp
                 marker.ns = "person_3d"
                 marker.id = i
@@ -270,6 +274,7 @@ class RgbdPedestrianDetector(Node):
                 marker.color.r = 0.0
                 marker.color.g = 1.0
                 marker.color.b = 0.0
+                marker.lifetime = rclpy.duration.Duration(seconds=0.3).to_msg()
                 self.pub_person_marker.publish(marker)
 
         # Publish detections / debug images

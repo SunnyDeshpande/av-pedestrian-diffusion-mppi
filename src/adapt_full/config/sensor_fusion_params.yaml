@@ -5,6 +5,20 @@ sensor_fusion_node:
     camera_distance_weight: 0.2                  
     lidar_direction_weight: 0.3     
     camera_direction_weight: 0.7    #according to chatgpt             
-    sync_queue_size: 10             
-    sync_slop: 0.1                  
-                                    
+    sync_queue_size: 10
+    sync_slop: 0.1
+    # Frames a track survives without a match before being dropped (and its
+    # path LINE_STRIP DELETEd). Small = paths disappear immediately when the
+    # pedestrian leaves frame; larger = tolerates more missed detections.
+    track_max_age: 3
+    # RViz marker lifetime (seconds) for per-track LINE_STRIPs. Acts as a
+    # safety net if explicit DELETE markers are dropped or the node stalls.
+    track_marker_lifetime_sec: 0.5
+    # Live track XY EMA (lower = smoother live state, slower to react).
+    track_smooth_alpha: 0.15
+    # Centered moving-average window for the published path (visualization only).
+    path_smoothing_window: 9
+    # Truncate each track's stored history to the most recent N metres of
+    # arc-length walked. Caps how far back the LINE_STRIP marker (and the
+    # diffusion node's history window) reach. 0 = disabled.
+    path_max_arc_length_m: 3.0
