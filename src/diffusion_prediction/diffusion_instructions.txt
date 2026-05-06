@@ -1,0 +1,252 @@
+================================================================================
+DIFFUSION PEDESTRIAN TRAJECTORY PREDICTION — INFERENCE NODE INSTRUCTIONS
+================================================================================
+
+OVERVIEW
+--------
+The diffusion model predicts future pedestrian trajectories (5 seconds, 20 steps)
+from observed history (5 seconds, 20 steps). It uses DDIM sampling to generate
+K diverse trajectory samples per pedestrian, then selects the best one.
+
+
+================================================================================
+COORDINATE FRAMES
+================================================================================
+
+1. SENSOR INPUT (from /fusion_pedestrian_position)
+   - Format: Int32MultiArray, flat [dist_m, bearing_deg, dist_m, bearing_deg, ...]
+   - Bearing convention (adapt fusion pipeline):
+       0°   = right side of vehicle (-y in base_link)
+       90°  = forward (+x in base_link)
+       180° = left side (+y in base_link)
+       270° = backward (-x in base_link)
+   - Convert to base_link Cartesian: x_forward, y_left (meters)
+
+2. TRACKER (internal)
+   - Maintains per-pedestrian history in base_link Cartesian (x, y in meters)
+   - Positions are absolute in vehicle frame (not ego-normalized yet)
+
+3. MODEL INPUT (pedestrian-centric / ego-normalized)
+   - Origin = pedestrian's LAST OBSERVED POSITION (step 20 of history)
+   - All history positions are shifted so that the final position = (0, 0)
+   - Velocities are in m/s (real physical units, computed from actual time deltas)
+   - This frame moves with the pedestrian, NOT the vehicle
+
+4. MODEL OUTPUT (same pedestrian-centric frame)
+   - Predicted future positions are displacements FROM the pedestrian's
+     last observed position
+   - e.g., output (0.3, 0.1) means "0.3m forward and 0.1m left of where
+     the pedestrian currently is"
+
+5. PUBLISHED OUTPUT (back to vehicle/base_link frame)
+   - Add back the pedestrian's current position in base_link:
+       published_x = predicted_x + pedestrian_current_x
+       published_y = predicted_y + pedestrian_current_y
+   - Topic: /pedestrian_predictions_tensor
+   - Frame: base_link (vehicle ego frame, meters)
+
+
+================================================================================
+MODEL INPUTS (forward pass)
+================================================================================
+
+hist : (B, 20, 4) float32
+    Per-timestep: [x, y, vx, vy]
+    - x, y:   position relative to pedestrian's last observed position (meters)
+              history[-1] = (0, 0) by construction
+              history[0] is the oldest point (~5s ago)
+    - vx, vy: velocity in m/s, computed as:
+              vel[i] = (pos[i] - pos[i-1]) / dt_actual
+              where dt_actual is the real wall-clock time between observations
+    - Coordinate axes: same as base_link (x=forward, y=left)
+
+hist_mask : (B, 20) uint8
+    1 = valid observation at this timestep
+    0 = no observation (pedestrian not yet tracked or occluded)
+    Model ignores masked timesteps via transformer key_padding_mask
+
+ego_vel : (B, 2) float32
+    [vehicle_speed_m_s, 0.0]
+    - Index 0: vehicle longitudinal speed from /pacmod/vehicle_speed_rpt
+    - Index 1: currently unused (always 0.0)
+
+t : (B,) long
+    Diffusion timestep (0 to 99). Internal to DDIM sampling loop.
+    NOT a real-world time value.
+
+y_t : (B, 20, 2) float32
+    Noised trajectory being denoised. Starts as pure Gaussian noise (t=99)
+    and gets progressively cleaner. Internal to DDIM loop.
+
+
+================================================================================
+MODEL OUTPUT (forward pass)
+================================================================================
+
+eps_pred : (B, 20, 2) float32
+    Predicted noise vector. Used by the DDIM sampler to update y_t.
+    NOT directly usable as a trajectory — must go through the sampling loop.
+
+
+================================================================================
+DDIM SAMPLING (produces usable trajectories)
+================================================================================
+
+Call: ddim_sample_loop(model, schedule, hist, mask, ego, K=20)
+
+Runs the model 10 times (DDIM steps) starting from random noise,
+progressively denoising into clean trajectory predictions.
+
+Output: futures (B, K, 20, 2) float32
+    K=20 diverse trajectory samples per pedestrian
+    Each sample: 20 future positions at 0.25s intervals (total 5.0s horizon)
+    Frame: pedestrian-centric (origin = last observed position)
+    Units: meters
+
+Default DDIM schedule (10 steps):
+    taus = [99, 88, 77, 66, 55, 44, 33, 22, 11, 0]
+
+Higher quality (slower):
+    25 steps: taus = list(range(99, -1, -(99 // 24)))[:24] + [0]
+    50 steps: taus = list(range(99, -1, -2))
+
+
+================================================================================
+POST-PROCESSING PIPELINE (selecting best trajectory)
+================================================================================
+
+1. PHYSICS FILTER
+   - Reject samples with speed > 3.5 m/s or acceleration > 4.0 m/s²
+   - Removes physically implausible predictions
+
+2. MODE SELECTION (curvature-aware)
+   - Compute median of valid samples
+   - Extrapolate from history curvature
+   - Blend: center = 0.6 * extrapolation + 0.4 * median
+   - Pick sample closest to this center
+
+3. STICKY TEMPORAL CONSISTENCY
+   - Avoid jumping between modes frame-to-frame
+   - Only switch if new candidate is 1.5x better for 3 consecutive frames
+
+4. SPLINE SMOOTHING
+   - Apply scipy UnivariateSpline (s_factor=50.0) to remove jitter
+
+5. TEMPORAL EMA
+   - Blend with previous frame: alpha=0.3 (70% previous, 30% current)
+   - Prevents sudden jumps in published prediction
+
+
+================================================================================
+PUBLISHED MESSAGE
+================================================================================
+
+Topic: /pedestrian_predictions_tensor
+Type:  std_msgs/msg/Float32MultiArray
+
+Shape: (M, 20, 2) flattened row-major
+
+Layout:
+  dim[0]: label="M",  size=M,  stride=M*20*2   (num pedestrians)
+  dim[1]: label="H",  size=20, stride=20*2      (time steps, 0.25s each)
+  dim[2]: label="xy", size=2,  stride=2         (x_forward, y_left)
+
+Frame: base_link (vehicle ego frame)
+Units: meters
+Update rate: same as /fusion_pedestrian_position input (~10 Hz)
+
+
+================================================================================
+SUBSCRIBES TO
+================================================================================
+
+/fusion_pedestrian_position  (std_msgs/Int32MultiArray)
+    Flat pairs: [dist_m, bearing_deg, dist_m, bearing_deg, ...]
+    Source: sensor fusion node (LiDAR + camera)
+
+/vehicle_rpt  (pacmod2_msgs/VehicleSpeedRpt)
+    Vehicle speed for ego_vel input
+
+
+================================================================================
+ALSO PUBLISHES
+================================================================================
+
+/person_prediction        (visualization_msgs/Marker)
+    LINE_STRIP marker of the primary (closest/lowest TTC) pedestrian's
+    predicted path. For RViz visualization.
+
+/pedestrian_motion        (geometry_msgs/Twist)
+    linear.x = pedestrian x position in base_link
+    linear.y = pedestrian y position in base_link
+    (Primary pedestrian only)
+
+/pedestrian_ttc           (std_msgs/Float64)
+    Time-to-collision in seconds for the primary pedestrian.
+    inf if no collision predicted within 5s horizon.
+
+
+================================================================================
+KEY PARAMETERS (ROS params)
+================================================================================
+
+weights             : str   — path to .pt checkpoint (REQUIRED)
+device              : str   — "cuda:0", "cpu", or "" (auto)
+K                   : int   — number of samples per pedestrian (default 20)
+ddim_steps          : int   — DDIM denoising steps (default 10)
+prediction_mode     : str   — "single" or "joint"
+max_agents          : int   — max pedestrians for joint mode (default 16)
+min_history_count   : int   — min observations before predicting (default 5)
+prediction_time     : float — horizon seconds (default 5.0)
+prediction_points   : int   — future timesteps (default 20)
+collision_distance_threshold : float — TTC collision radius (default 1.0 m)
+latency_warn_ms     : float — log warning if inference > this (default 80 ms)
+
+
+================================================================================
+ARCHITECTURE SUMMARY
+================================================================================
+
+Model: TrajectoryDenoiser (single) or JointTrajectoryDenoiser (joint)
+  - d_model = 256
+  - nhead = 8
+  - num_enc_layers = 6 (transformer encoder over history)
+  - num_dec_layers = 4 (cross-attention decoder, noisy future attends to history)
+  - dim_ff = 512
+  - Params: 6.5M (single), 8.2M (joint)
+
+Diffusion: Cosine noise schedule, T=100 total steps, DDIM-10 at inference
+Latency target: <30ms per inference cycle (M=8, K=20, DDIM-10, RTX 5070 Ti)
+
+
+================================================================================
+MINIMAL INFERENCE PSEUDOCODE
+================================================================================
+
+    # 1. Get detections in base_link Cartesian
+    detections = polar_to_cartesian(fusion_msg)  # (M, 2) meters
+
+    # 2. Update tracker (associates detections to existing tracks)
+    tracker.update(detections, current_time)
+
+    # 3. For each track with enough history:
+    hist, mask = tracker.get_history(track_id, T_hist=20)
+    # hist is (20, 4): [x, y, vx, vy], ego-normalized (last pos = origin)
+    # mask is (20,): 1=valid, 0=padding
+
+    ego_vel = [vehicle_speed, 0.0]
+
+    # 4. Stack into batch, run DDIM
+    futures = ddim_sample_loop(model, schedule, hist, mask, ego_vel, K=20)
+    # futures: (B, K, 20, 2) in pedestrian-centric frame
+
+    # 5. Select best sample per pedestrian (physics filter + mode selection)
+    best = select_best(futures)  # (M, 20, 2)
+
+    # 6. Convert back to base_link
+    for i, track in enumerate(active_tracks):
+        best[i, :, 0] += track.x  # add current position
+        best[i, :, 1] += track.y
+
+    # 7. Publish as Float32MultiArray (M, 20, 2)
+    publish(best)
