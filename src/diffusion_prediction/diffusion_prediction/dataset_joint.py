@@ -6,7 +6,7 @@ Shard format (.npz):
     histories    : (N, M, 20, 4) float32
     history_masks: (N, M, 20)    uint8
     futures      : (N, M, 20, 2) float32
-    agent_masks  : (N, M)        uint8    — 1 = real agent, 0 = padding
+    agent_masks  : (N, M)        uint8    - 1 = real agent, 0 = padding
     ego_vels     : (N, 2)        float32
 """
 
@@ -67,7 +67,7 @@ class JointTrajectoryDataset(Dataset):
         ego = self.ego_vels[idx].copy()          # (2,)
 
         if self.augment:
-            # Random rotation ±15° — apply same rotation to all agents
+            # Random rotation ±15° - apply same rotation to all agents
             theta = np.random.uniform(-np.pi / 12, np.pi / 12)
             R = rotation_matrix_2d(theta)
 
@@ -90,7 +90,7 @@ class JointTrajectoryDataset(Dataset):
                 hist[m, drop_mask] = 0.0
                 mask[m, drop_mask] = 0
 
-            # Translation jitter ±0.1m — same offset for all agents
+            # Translation jitter ±0.1m - same offset for all agents
             jitter = np.random.uniform(-0.1, 0.1, size=(1, 1, 2)).astype(np.float32)
             for m in range(len(agent_mask)):
                 if agent_mask[m] == 0:

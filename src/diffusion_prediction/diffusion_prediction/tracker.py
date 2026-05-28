@@ -65,7 +65,7 @@ class Tracker:
 
         Parameters
         ----------
-        detections : np.ndarray, shape (M, 2) — [x, y] in base_link.
+        detections : np.ndarray, shape (M, 2) - [x, y] in base_link.
         t_now      : float, current timestamp in seconds.
 
         Returns

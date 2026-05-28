@@ -26,7 +26,7 @@ def generate_launch_description():
     )
     mode_arg = DeclareLaunchArgument(
         'prediction_mode', default_value='joint',
-        description='"joint" or "single" — must match the weights checkpoint.',
+        description='"joint" or "single" - must match the weights checkpoint.',
     )
     device_arg = DeclareLaunchArgument(
         'device', default_value='cuda:0',

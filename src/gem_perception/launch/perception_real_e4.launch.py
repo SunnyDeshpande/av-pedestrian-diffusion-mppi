@@ -45,7 +45,7 @@ def generate_launch_description():
         DeclareLaunchArgument("optical_frame_name",
                               default_value="front_single_camera_optical_link"),
 
-        # Body→optical static TF (-π/2, 0, -π/2) — only if URDF doesn't have it.
+        # Body→optical static TF (-π/2, 0, -π/2) - only if URDF doesn't have it.
         Node(
             package="tf2_ros",
             executable="static_transform_publisher",

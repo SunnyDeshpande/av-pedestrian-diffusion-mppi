@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze prediction smoothness — compare raw diffusion output vs smoothed.
+"""Analyze prediction smoothness - compare raw diffusion output vs smoothed.
 
 Generates diagnostic plots showing:
 1. Frame-to-frame jitter (how much predictions jump between timesteps)
@@ -94,7 +94,7 @@ def main():
     model.eval()
     schedule = CosineSchedule(T=100).to(device)
 
-    # Generate a straight-walking scenario — 60 frames
+    # Generate a straight-walking scenario - 60 frames
     dt = 0.25
     total_steps = 60
     t_all = np.arange(total_steps) * dt

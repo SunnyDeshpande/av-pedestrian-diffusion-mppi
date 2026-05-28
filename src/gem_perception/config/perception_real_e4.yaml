@@ -1,4 +1,4 @@
-# gem_perception — real GEM e4 (ROS2 humble) overrides.
+# gem_perception - real GEM e4 (ROS2 humble) overrides.
 #
 # Fill in the few [TBD] values from docs/real_car_checklist.md output, then:
 #   ros2 launch gem_perception_ros2 perception_real_e4.launch.py default_prompt:="red sign"

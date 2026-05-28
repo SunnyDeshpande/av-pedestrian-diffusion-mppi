@@ -47,7 +47,7 @@ class MapTfBroadcaster(Node):
         self.declare_parameter("ref_lon", -88.236365)
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("base_frame", "base_link")
-        # Mode A (Septentrio INS — prefer this on the real e4):
+        # Mode A (Septentrio INS - prefer this on the real e4):
         self.declare_parameter("ins_topic", "/septentrio_gnss/insnavgeod")
         # Mode B fallbacks:
         self.declare_parameter("gps_topic", "/septentrio_gnss/navsatfix")

@@ -192,13 +192,13 @@ def _extrapolate_from_history(hist: np.ndarray, T_fut: int = 20, dt: float = 0.2
     """Extrapolate a constant-curvature trajectory from observed history.
 
     Uses the last few history positions to estimate velocity and turning rate,
-    then extrapolates forward. This serves as a prior for mode selection —
+    then extrapolates forward. This serves as a prior for mode selection -
     during arcs, we prefer samples that continue the curve rather than
     samples closest to the (potentially misleading) sample mean.
 
     Parameters
     ----------
-    hist : (T_hist, 4) array with [x, y, vx, vy] — pedestrian-centric, last
+    hist : (T_hist, 4) array with [x, y, vx, vy] - pedestrian-centric, last
            position at origin (matches the training-side inference spec).
     T_fut : number of future steps to extrapolate
     dt : timestep
@@ -213,7 +213,7 @@ def _extrapolate_from_history(hist: np.ndarray, T_fut: int = 20, dt: float = 0.2
     vx, vy = hist[-1, 2], hist[-1, 3]
     speed = math.sqrt(vx * vx + vy * vy)
     if speed < 0.05:
-        # Essentially stationary — predict staying put at the origin
+        # Essentially stationary - predict staying put at the origin
         return np.zeros((T_fut, 2), dtype=np.float32)
 
     heading = math.atan2(vy, vx)
@@ -267,7 +267,7 @@ def filter_and_smooth_trajectories(
     """Physics-based outlier rejection + curvature-aware filtering + spline smoothing.
 
     Pipeline:
-    1. Per-sample physics check — reject implausible speed/acceleration.
+    1. Per-sample physics check - reject implausible speed/acceleration.
     2. If history is provided, compute a curvature-extrapolated reference
        trajectory and use it (blended with sample median) as the center
        for statistical outlier rejection. This prevents the arc problem

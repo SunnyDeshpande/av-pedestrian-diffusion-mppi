@@ -492,7 +492,7 @@ def plot_demo_single(results, output_path, K):
     for j in range(N, num_rows * num_cols):
         axes[j // num_cols, j % num_cols].set_visible(False)
 
-    fig.suptitle("Diffusion Pedestrian Trajectory Prediction — Demo\n"
+    fig.suptitle("Diffusion Pedestrian Trajectory Prediction - Demo\n"
                  "Blue = observed history (5s)  |  Orange = predicted futures (5s, K=20 samples)",
                  fontsize=12, y=1.03)
     plt.tight_layout()
@@ -560,7 +560,7 @@ def plot_demo_joint(results, output_path, K):
     for j in range(N, num_rows * num_cols):
         axes[j // num_cols, j % num_cols].set_visible(False)
 
-    fig.suptitle("Joint Multi-Agent Diffusion Prediction — Demo\n"
+    fig.suptitle("Joint Multi-Agent Diffusion Prediction - Demo\n"
                  "Solid = observed history  |  Thin = K=20 samples  |  Thick = best mode",
                  fontsize=12, y=1.03)
     plt.tight_layout()

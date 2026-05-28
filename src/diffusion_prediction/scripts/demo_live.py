@@ -146,7 +146,7 @@ JOINT_SCENARIOS = [
 def build_history(positions, dt=0.25):
     """Convert (T, 2) absolute positions to (T, 4) ego-normalized history.
 
-    Normalizes so the last position is at origin. No heading rotation —
+    Normalizes so the last position is at origin. No heading rotation -
     training data uses AV heading (arbitrary relative to pedestrian),
     so the model is orientation-agnostic.
 
@@ -416,7 +416,7 @@ def main():
             preds = predict_joint(model, schedule, hists, masks,
                                   args.max_agents, device, K=args.K)
             preds = smooth_predictions(preds)
-            # (K, M, 20, 2) — convert each agent to absolute
+            # (K, M, 20, 2) - convert each agent to absolute
             preds_abs = preds.copy()
             for m in range(len(frame["agents"])):
                 preds_abs[:, m] += frame["agents"][m]["origin"]
@@ -490,7 +490,7 @@ def main():
         sc_idx = frame["scenario_idx"]
         bounds = scenario_bounds[sc_idx]
 
-        # Fixed axis limits — never changes within a scenario
+        # Fixed axis limits - never changes within a scenario
         ax.set_xlim(bounds["xlim"])
         ax.set_ylim(bounds["ylim"])
         ax.set_aspect("equal")
@@ -534,7 +534,7 @@ def main():
             dist_threshold = np.median(dists) + 2.0 * dists.std()
             inlier_mask = dists < dist_threshold
 
-            # Predicted samples (fan) — only inliers
+            # Predicted samples (fan) - only inliers
             for k in range(K):
                 if not inlier_mask[k]:
                     continue

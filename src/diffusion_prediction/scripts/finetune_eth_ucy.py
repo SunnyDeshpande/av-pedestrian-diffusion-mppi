@@ -62,7 +62,7 @@ def load_model(args, device):
             model.load_state_dict(state)
         print(f"Loaded pre-trained weights: {args.ckpt}")
     else:
-        print("[WARN] No pre-trained weights — training from scratch")
+        print("[WARN] No pre-trained weights - training from scratch")
 
     return model
 

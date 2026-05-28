@@ -1,4 +1,4 @@
-### robot_localization EKF — fuses Septentrio IMU into a local odom
+### robot_localization EKF - fuses Septentrio IMU into a local odom
 ### Output: /odometry/filtered  (frame_id: odom, child_frame_id: base_link)
 ### Static TF imu_link -> base_link must exist (provided by tf2.launch.py).
 

@@ -4,13 +4,13 @@
 Unified launch file with 3 selectable prediction modes and controller choice.
 
 Prediction modes:
-  single-default   — Original constant-velocity predictor (multi-ped extended)
-  single-diffusion — Per-pedestrian diffusion model (TrajectoryDenoiser)
-  multi-diffusion  — Joint multi-agent diffusion model (JointTrajectoryDenoiser)
+  single-default   - Original constant-velocity predictor (multi-ped extended)
+  single-diffusion - Per-pedestrian diffusion model (TrajectoryDenoiser)
+  multi-diffusion  - Joint multi-agent diffusion model (JointTrajectoryDenoiser)
 
 Controllers:
-  mppi    — MPPI with velocity-aware pedestrian obstacle cost
-  stanley — Stanley cross-track + PID speed (no obstacle avoidance)
+  mppi    - MPPI with velocity-aware pedestrian obstacle cost
+  stanley - Stanley cross-track + PID speed (no obstacle avoidance)
 
 Usage examples:
   ros2 launch adapt_full adapt_prediction_launch.py prediction_mode:=single-default controller:=mppi

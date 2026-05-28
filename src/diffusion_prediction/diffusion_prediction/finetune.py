@@ -86,7 +86,7 @@ def finetune(args):
             if "ego_in" in name or "t_embed" in name:
                 p.requires_grad = False
 
-    # Optimizer — constant lr for finetune
+    # Optimizer - constant lr for finetune
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,

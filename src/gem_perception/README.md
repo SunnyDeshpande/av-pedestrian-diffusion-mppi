@@ -1,7 +1,7 @@
 # gem_perception_ros2
 
 ROS2 **humble** parallel of `gem_perception` (ROS1 noetic). Same nodes, same
-topics, same behavior — designed to run on the real GEM e4 onboard computer.
+topics, same behavior - designed to run on the real GEM e4 onboard computer.
 Drop this directory into your humble workspace and build with
 `colcon build --symlink-install`.
 
@@ -29,7 +29,7 @@ Resolved in order: `$GEM_PERCEPTION_MODELS` → `~/host/gem_perception_models/` 
 ros2 run gem_perception_ros2 download_models
 ```
 
-## Run — real e4 (recommended preset)
+## Run - real e4 (recommended preset)
 
 ```bash
 # URDF already publishes the camera optical-link
@@ -55,7 +55,7 @@ ros2 launch gem_perception_ros2 perception_real_e4.launch.py \
 The real-car preset loads `config/perception_real_e4.yaml`; edit that for any
 site-specific values (frame names, GPS reference lat/lon, model path, etc.).
 
-## Run — sim-style defaults
+## Run - sim-style defaults
 
 ```bash
 ros2 launch gem_perception_ros2 perception_yolo.launch.py default_prompt:="red sign"

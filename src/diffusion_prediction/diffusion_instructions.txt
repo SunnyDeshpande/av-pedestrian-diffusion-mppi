@@ -1,5 +1,5 @@
 ================================================================================
-DIFFUSION PEDESTRIAN TRAJECTORY PREDICTION — INFERENCE NODE INSTRUCTIONS
+DIFFUSION PEDESTRIAN TRAJECTORY PREDICTION - INFERENCE NODE INSTRUCTIONS
 ================================================================================
 
 OVERVIEW
@@ -85,7 +85,7 @@ MODEL OUTPUT (forward pass)
 
 eps_pred : (B, 20, 2) float32
     Predicted noise vector. Used by the DDIM sampler to update y_t.
-    NOT directly usable as a trajectory — must go through the sampling loop.
+    NOT directly usable as a trajectory - must go through the sampling loop.
 
 
 ================================================================================
@@ -190,17 +190,17 @@ ALSO PUBLISHES
 KEY PARAMETERS (ROS params)
 ================================================================================
 
-weights             : str   — path to .pt checkpoint (REQUIRED)
-device              : str   — "cuda:0", "cpu", or "" (auto)
-K                   : int   — number of samples per pedestrian (default 20)
-ddim_steps          : int   — DDIM denoising steps (default 10)
-prediction_mode     : str   — "single" or "joint"
-max_agents          : int   — max pedestrians for joint mode (default 16)
-min_history_count   : int   — min observations before predicting (default 5)
-prediction_time     : float — horizon seconds (default 5.0)
-prediction_points   : int   — future timesteps (default 20)
-collision_distance_threshold : float — TTC collision radius (default 1.0 m)
-latency_warn_ms     : float — log warning if inference > this (default 80 ms)
+weights             : str   - path to .pt checkpoint (REQUIRED)
+device              : str   - "cuda:0", "cpu", or "" (auto)
+K                   : int   - number of samples per pedestrian (default 20)
+ddim_steps          : int   - DDIM denoising steps (default 10)
+prediction_mode     : str   - "single" or "joint"
+max_agents          : int   - max pedestrians for joint mode (default 16)
+min_history_count   : int   - min observations before predicting (default 5)
+prediction_time     : float - horizon seconds (default 5.0)
+prediction_points   : int   - future timesteps (default 20)
+collision_distance_threshold : float - TTC collision radius (default 1.0 m)
+latency_warn_ms     : float - log warning if inference > this (default 80 ms)
 
 
 ================================================================================

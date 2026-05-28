@@ -1,6 +1,6 @@
 """ROS-agnostic helpers used by both ROS1 and ROS2 wrappers.
 
-This module deliberately avoids importing rospy / rclpy — it only uses numpy
+This module deliberately avoids importing rospy / rclpy - it only uses numpy
 and standard library so both framework-specific wrappers can reuse it.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# adapt_requirements.text  —  reproducible env for the Adapt MPPI stack.
+# adapt_requirements.text  -  reproducible env for the Adapt MPPI stack.
 #
 # Target runtime:  Ubuntu 24.04 + ROS 2 Jazzy + Python 3.12  (vehicle).
 # Dev host (Ubuntu 22.04 + ROS 2 Humble) can mirror this in a conda env
@@ -7,7 +7,7 @@
 # Scope rule:  this file is for CONDA / PIP deps only.  We deliberately
 # do NOT install any system apt packages or edit environment variables
 # on the vehicle.  ROS 2 Jazzy (including rclpy, pacmod2_msgs, etc.) is
-# assumed to be preinstalled on the vehicle host — source its
+# assumed to be preinstalled on the vehicle host - source its
 # /opt/ros/jazzy/setup.bash manually when starting a terminal.
 #
 # ----------------------------------------------------------------------
@@ -18,7 +18,7 @@
 #
 # ----------------------------------------------------------------------
 # GPU torch must match the driver's CUDA major.  The pin below targets
-# CUDA 12.1 and is conservative — it works on any CUDA 12.x driver.
+# CUDA 12.1 and is conservative - it works on any CUDA 12.x driver.
 # Bump to +cu124 or +cu129 if you specifically need a newer toolchain
 # (e.g. the vehicle ships a 12.9 runtime and you want to exploit it).
 #
@@ -27,9 +27,10 @@ torch==2.5.1+cu121
 pytorch_mppi>=0.9.1
 numpy>=1.26,<2.2
 matplotlib
+pyarrow>=14.0
 
 # rosidl / colcon build deps (needed if you colcon-build the workspace
-# from inside this conda env — ROS 2 Humble and Jazzy both require
+# from inside this conda env - ROS 2 Humble and Jazzy both require
 # empy 3.x, not 4.x).
 empy==3.3.4
 lark>=1.1

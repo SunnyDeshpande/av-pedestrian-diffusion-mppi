@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ROS 2 inference node — drop-in replacement for the constant-velocity predictor.
+"""ROS 2 inference node - drop-in replacement for the constant-velocity predictor.
 
 Subscribes to the same topics, publishes the same topics, and adds
 /pedestrian_predictions_tensor for time-indexed MPPI obstacle cost.
@@ -159,7 +159,7 @@ class DiffusionPredictorNode(Node):
                 self.get_logger().info(f"Loaded weights from {self.weights_path}")
             else:
                 self.get_logger().warn(
-                    "No weights loaded — running with random weights (prediction will be noise). "
+                    "No weights loaded - running with random weights (prediction will be noise). "
                     "Set the 'weights' parameter to a checkpoint path."
                 )
 

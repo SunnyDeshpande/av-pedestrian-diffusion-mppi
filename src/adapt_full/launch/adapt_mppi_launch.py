@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # launch/adapt_mppi_launch.py
 """
-Adapt autonomy stack launch file — MPPI replaces Stanley.
+Adapt autonomy stack launch file - MPPI replaces Stanley.
 
 Starts `adapt_mppi_node` (pkg `mppi_controller`), which speaks the
 AutoShield topic contract (NavSatFix + INSNavGeod + VehicleSpeedRpt +
@@ -67,7 +67,7 @@ def generate_launch_description():
 
     # Note: adapt's original launch referenced a non-existent
     # `lidar_person_detection` package. The real node lives inside
-    # adapt_full itself — this corrected entry points at it.
+    # adapt_full itself - this corrected entry points at it.
     lidar_node = Node(
         package='adapt_full',
         executable='lidar_processing',
@@ -77,7 +77,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('enable_lidar')),
     )
 
-    # Adapt MPPI replaces Stanley. Native adapt topic contract —
+    # Adapt MPPI replaces Stanley. Native adapt topic contract -
     # no bridge nodes needed.
     mppi_node = Node(
         package='mppi_controller',

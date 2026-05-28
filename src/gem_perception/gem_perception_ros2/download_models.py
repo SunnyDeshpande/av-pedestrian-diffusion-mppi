@@ -7,9 +7,9 @@ Resolution order (matches sam_detector._default_models_root):
   3. ~/gem_perception_models (real-car / non-docker).
 
 Covers:
- - YOLO-World (small) — always
- - LangSAM (HF cache)  — py>=3.10 only
- - GroundingDINO + SAM1 — py<3.10 fallback
+ - YOLO-World (small) - always
+ - LangSAM (HF cache)  - py>=3.10 only
+ - GroundingDINO + SAM1 - py<3.10 fallback
 """
 import argparse
 import os
@@ -30,7 +30,7 @@ def _default_root() -> pathlib.Path:
 
 ROOT = _default_root()
 
-# (url, dst, min_bytes) — min_bytes is a sanity floor; files below this are
+# (url, dst, min_bytes) - min_bytes is a sanity floor; files below this are
 # treated as incomplete/corrupt and re-downloaded.
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s-worldv2.pt"
 YOLO_DST = ROOT / "yolov8s-worldv2.pt"
@@ -54,7 +54,7 @@ def _dl(url, dst, min_bytes, force=False):
         if size >= min_bytes:
             print(f"[skip] {dst.name} ({size / 1e6:.1f} MB)")
             return
-        print(f"[redo] {dst.name} is {size / 1e6:.1f} MB, expected >= {min_bytes / 1e6:.1f} MB — re-downloading")
+        print(f"[redo] {dst.name} is {size / 1e6:.1f} MB, expected >= {min_bytes / 1e6:.1f} MB - re-downloading")
     elif dst.exists() and force:
         print(f"[force] re-downloading {dst.name}")
     print(f"[get]  {url}")
