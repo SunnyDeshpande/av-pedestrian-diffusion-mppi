@@ -12,6 +12,22 @@
 
 ---
 
+## Demos
+
+**MPPI motion planner** — 600 GPU trajectory rollouts per cycle steering the GEM e4 around pedestrians at 10 Hz
+
+<video src="https://github.com/SunnyDeshpande/av-pedestrian-diffusion-mppi/raw/main/media/adapt-mppi.mp4" controls muted width="100%"></video>
+
+**Diffusion pedestrian prediction** — multi-modal 5-second trajectory futures from the MID-style denoiser
+
+<video src="https://github.com/SunnyDeshpande/av-pedestrian-diffusion-mppi/raw/main/media/adapt-diffusion.mp4" controls muted width="100%"></video>
+
+**SAM pedestrian segmentation** — promptable segmentation masks over the camera stream
+
+<video src="https://github.com/SunnyDeshpande/av-pedestrian-diffusion-mppi/raw/main/media/adapt-vlm.mp4" controls muted width="100%"></video>
+
+---
+
 ## Overview
 
 Reactive pedestrian handling on autonomous vehicles tends to rely on proximity thresholds and late braking, which is brittle under uncertainty, occlusion, and partial observability. ADAPT replaces that pattern with two coordinated changes:
