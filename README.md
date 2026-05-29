@@ -16,15 +16,15 @@
 
 **MPPI motion planner** — 600 GPU trajectory rollouts per cycle steering the GEM e4 around pedestrians at 10 Hz
 
-<video src="https://github.com/SunnyDeshpande/av-pedestrian-diffusion-mppi/raw/main/media/adapt-mppi.mp4" controls muted width="100%"></video>
+![MPPI motion planner demo](media/adapt-mppi.gif)
 
 **Diffusion pedestrian prediction** — multi-modal 5-second trajectory futures from the MID-style denoiser
 
-<video src="https://github.com/SunnyDeshpande/av-pedestrian-diffusion-mppi/raw/main/media/adapt-diffusion.mp4" controls muted width="100%"></video>
+![Diffusion pedestrian prediction demo](media/adapt-diffusion.gif)
 
 **SAM pedestrian segmentation** — promptable segmentation masks over the camera stream
 
-<video src="https://github.com/SunnyDeshpande/av-pedestrian-diffusion-mppi/raw/main/media/adapt-vlm.mp4" controls muted width="100%"></video>
+![SAM pedestrian segmentation demo](media/adapt-vlm.gif)
 
 ---
 
