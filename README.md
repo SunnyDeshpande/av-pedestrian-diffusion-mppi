@@ -285,10 +285,7 @@ UIUC CS 588 (Autonomous Vehicle Systems) course staff and the UIUC Polaris GEM p
 
 ## Authors
 
-**Sunny Deshpande** - MEng Autonomy & Robotics, UIUC
-[sunnynd2@illinois.edu](mailto:sunnynd2@illinois.edu) · [sunnydeshpande.com](https://sunnydeshpande.com)
-
-Het Patel · Aditya Potnis · Keisuke Ogawa · Francisco Affonso
+Sunny Deshpande (UIUC) · Het Patel (UIUC) · Aditya Potnis (UIUC) · Keisuke Ogawa (UIUC) · Francisco Affonso (UIUC)
 
 ---
 
