@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-# filepath: /home/het/UIUC/ECE484_Adapt/src/adapt_main/adapt_main/adapt_straight_path.py
 import os
 import csv
 import math
