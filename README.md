@@ -295,7 +295,7 @@ cs_588_g10/
 
 ## Acknowledgments
 
-UIUC CS 588 (Autonomous Vehicle Systems) course staff and the UIUC Polaris GEM platform maintainers for vehicle infrastructure, ROS drivers, and safety procedures. This project is built on top of the [`UIUC-Robotics/gem_ws`](https://github.com/UIUC-Robotics/gem_ws) base vehicle / sensor-driver workspace, which provides the PACMod2 interface, sensor bringup, and ROS 2 driver layer. The diffusion predictor draws on the MID (Motion Indeterminacy Diffusion) line of work for trajectory generation. The pipeline extends the AutoShield safety-controller architecture with sampling-based MPC and learned prediction.
+UIUC CS 588 (Autonomous Vehicle Systems) course staff and the UIUC Polaris GEM platform maintainers for vehicle infrastructure, ROS drivers, and safety procedures. This project is built on top of the [`UIUC-Robotics/gem_ws`](https://github.com/UIUC-Robotics/gem_ws) base vehicle / sensor-driver workspace, which provides the PACMod2 interface, sensor bringup, and ROS 2 driver layer. The Gazebo simulation used was created by ['Harish Balaji'](https://github.com/harishkumarbalaji/POLARIS_GEM_Simulator). The diffusion predictor draws on the MID (Motion Indeterminacy Diffusion) line of work for trajectory generation. The pipeline extends the AutoShield safety-controller architecture with sampling-based MPC and learned prediction.
 
 ---
 
